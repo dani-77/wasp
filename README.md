@@ -16,20 +16,40 @@ this model rather than `config.h` + recompile.
 
 ## Status (2026-08-12)
 
-Early — most of this is still config.h-driven dwl underneath. What's
-actually working so far:
+Most of the day-to-day compositor is Lua-driven now. What's actually
+working:
 
 - **Forked from dwl `main`**, full upstream git history kept.
 - **Bar**: the [dwl-patches] `bar` + `barconfig` patches applied and
   verified live — a real dwm-style status bar (text via fcft/pixman/tllist),
   fed status text over `stdin` the classic dwl way (`your-script | wasp`).
-- **Lua config, appearance so far**: wasp embeds Lua 5.4 (`luaconfig.c`/
-  `.h`) and loads `~/.config/wasp/config.lua` at startup. Border width/
-  colors, the bar's enable/position/layout, and the background color are
-  live-driven from it right now — see `examples/config.lua`. Verified by
-  eye in a nested session.
+  `scripts/statusbar.sh` is a ready-to-use one (CPU/RAM/volume/battery/
+  clock) — without something feeding it, the bar just shows its startup
+  placeholder text forever, it has no built-in widgets of its own.
+- **Lua config, appearance**: wasp embeds Lua 5.4 (`luaconfig.c`/`.h`) and
+  loads `~/.config/wasp/config.lua` at startup. Border width/colors, the
+  bar's enable/position/layout, and the background color are live-driven
+  from it — see `examples/config.lua`. Verified by eye in a nested session.
+- **Keybindings**: fully Lua-driven — `wasp.keys` in `config.lua` builds the
+  keymap at startup, `wasp.modkey` picks the primary modifier, and
+  `wasp.terminal`/`wasp.menu` make the launched terminal/menu agnostic
+  (no more hardcoded `foot`). Suggested bindings for workspace switching,
+  window/monitor navigation, resize (master-area and keyboard
+  move/resize), and layout cycling (tile/floating/monocle/dwindle) ship in
+  `examples/config.lua`; a small built-in fallback keymap keeps you from
+  ever being locked out if `config.lua` is missing or broken.
+- **Layouts**: tile, floating, monocle (upstream dwl), plus `dwindle`
+  (fibonacci/spiral tiling, adapted from [dwl-patches]).
+- **Gaps**: `wasp.gaps = { inner, outer, smart }` — inner/outer spacing
+  around tiled windows, `smart` drops the outer gap for a single window.
+- **Keyboard**: `wasp.keyboard = { layout, variant, model, options, rules,
+  repeat_rate, repeat_delay }` — xkb layout switching and repeat speed,
+  live from `config.lua` instead of `config.h` constants.
+- **Session file**: `make install` installs the `wasp` binary and a
+  `wasp.desktop` under `wayland-sessions`, so greetd (or any greeter that
+  reads that directory) can list and select it.
 
-Not done yet: keybindings, autostart, gaps, resize, more border styles, and
+Not done yet: autostart, mouse-drag resize variety, more border styles, and
 actually *reloading* the config without restarting (right now it's read
 once at startup — the reload trigger itself is still to come). The full
 running list, plus which [dwl-patches] are earmarked for which feature and
@@ -62,9 +82,19 @@ mkdir -p ~/.config/wasp
 cp examples/config.lua ~/.config/wasp/config.lua
 ```
 
-`examples/config.lua` is both the default and the reference — it's a short
-file right now, appearance-only, and will grow as more of `config.h` moves
-over to Lua. See [`NOTES.md`](NOTES.md) for what's coming.
+`examples/config.lua` is both the default and the reference: appearance,
+gaps, keyboard, terminal/menu, and a full suggested keymap (with a comment
+block explaining every action and its fields). It'll keep growing as more
+of `config.h` moves over to Lua — see [`NOTES.md`](NOTES.md) for what's
+coming.
+
+For the bar's right-side status text, pipe something into wasp's `stdin`
+(it has no built-in widgets of its own, same as upstream dwl) —
+`scripts/statusbar.sh` is a ready-to-use one:
+
+```sh
+scripts/statusbar.sh | wasp
+```
 
 ## Credit
 
@@ -72,8 +102,22 @@ wasp is a fork — nearly everything here is [dwl]'s work, not wasp's own.
 The original dwl README (build details, community links, project
 philosophy, acknowledgements to Devin J. Pohly and the rest of the dwl
 contributors) is preserved at [`doc/NOTES.md`](doc/NOTES.md) rather than
-overwritten. wasp's own additions are licensed the same way — see
-`LICENSE`.
+overwritten.
+
+## License
+
+Two licenses, because this is a fork, not a from-scratch project:
+
+- **`LICENSE` (GPLv3)** — dwl's own license. `dwl.c`, `config.def.h`,
+  `config.mk`, `Makefile`, `client.h`, `util.c`, `util.h`, `dwl.1`, and
+  `protocols/*` are all modifications of dwl's original files, so they (and
+  the compiled `wasp` binary as a whole, since it links GPLv3 code) stay
+  under GPLv3 — that's simply a requirement of the license they were under
+  before wasp touched them, not a choice wasp gets to make.
+- **[`LICENSE.wasp`](LICENSE.wasp) (MIT)** — files wasp added that have no
+  upstream dwl equivalent and aren't derived from it: this README,
+  `NOTES.md`, `luaconfig.c`/`.h`, `examples/config.lua`, `scripts/*`,
+  `wasp.desktop`, and `assets/*`. Copyright Daniel Azevedo.
 
 [dwl]: https://codeberg.org/dwl/dwl
 [dwl-patches]: https://codeberg.org/dwl/dwl-patches

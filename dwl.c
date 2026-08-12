@@ -10,6 +10,7 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -95,12 +96,8 @@ enum { XDGShell, LayerShell, X11 }; /* client types */
 enum { LyrBg, LyrBottom, LyrTile, LyrFloat, LyrTop, LyrFS, LyrOverlay, LyrBlock, NUM_LAYERS }; /* scene layers */
 enum { ClkTagBar, ClkLtSymbol, ClkStatus, ClkTitle, ClkClient, ClkRoot }; /* clicks */
 
-typedef union {
-	int i;
-	uint32_t ui;
-	float f;
-	const void *v;
-} Arg;
+/* Arg is defined in luaconfig.h now (both dwl.c and luaconfig.c need the
+ * exact same layout -- see that header). */
 
 typedef struct {
 	unsigned int click;
@@ -151,12 +148,8 @@ typedef struct {
 	uint32_t resize; /* configure serial of a pending resize */
 } Client;
 
-typedef struct {
-	uint32_t mod;
-	xkb_keysym_t keysym;
-	void (*func)(const Arg *);
-	const Arg arg;
-} Key;
+/* Key is defined in luaconfig.h now too -- luaconfig.c builds keys[]
+ * entries out of it at runtime, so it can't live only in dwl.c anymore. */
 
 typedef struct {
 	struct wlr_keyboard_group *wlr_group;
@@ -316,6 +309,7 @@ static void destroypointerconstraint(struct wl_listener *listener, void *data);
 static void destroysessionlock(struct wl_listener *listener, void *data);
 static void destroykeyboardgroup(struct wl_listener *listener, void *data);
 static Monitor *dirtomon(enum wlr_direction dir);
+static void dwindle(Monitor *m);
 static void drawbar(Monitor *m);
 static void drawbars(void);
 static void focusclient(Client *c, int lift);
@@ -341,6 +335,7 @@ static void motionnotify(uint32_t time, struct wlr_input_device *device, double 
 		double sy, double sx_unaccel, double sy_unaccel);
 static void motionrelative(struct wl_listener *listener, void *data);
 static void moveresize(const Arg *arg);
+static void moveresizekb(const Arg *arg);
 static void outputmgrapply(struct wl_listener *listener, void *data);
 static void outputmgrapplyortest(struct wlr_output_configuration_v1 *config, int test);
 static void outputmgrtest(struct wl_listener *listener, void *data);
@@ -501,6 +496,61 @@ static struct wlr_xwayland *xwayland;
 
 /* attempt to encapsulate suck into one file */
 #include "client.h"
+
+/* wasp: bridge for luaconfig.c, which builds Key entries out of parsed
+ * config.lua data at runtime. It's a separate translation unit and can't
+ * reach dwl.c's `static` action functions or the `layouts[]` table above
+ * (just defined by config.h) directly, so it asks for them by name
+ * instead. Add a line here for every action name config.lua's
+ * `wasp.keys` entries are allowed to use -- see luaconfig.c's
+ * build_key_arg() for how each one's `arg` gets filled in. */
+static const struct { const char *name; ActionFn fn; } actiontable[] = {
+	{ "spawn",            spawn },
+	{ "spawn-terminal",   spawn },
+	{ "spawn-menu",       spawn },
+	{ "focusstack",       focusstack },
+	{ "incnmaster",       incnmaster },
+	{ "setmfact",         setmfact },
+	{ "zoom",             zoom },
+	{ "view",             view },
+	{ "toggleview",       toggleview },
+	{ "tag",              tag },
+	{ "toggletag",        toggletag },
+	{ "focusmon",         focusmon },
+	{ "tagmon",           tagmon },
+	{ "setlayout",        setlayout },
+	{ "togglefloating",   togglefloating },
+	{ "togglefullscreen", togglefullscreen },
+	{ "togglebar",        togglebar },
+	{ "killclient",       killclient },
+	{ "quit",             quit },
+	{ "chvt",             chvt },
+	{ "moveresizekb",     moveresizekb },
+};
+
+ActionFn
+wasp_lookup_action(const char *name)
+{
+	size_t i;
+	for (i = 0; i < LENGTH(actiontable); i++)
+		if (!strcmp(actiontable[i].name, name))
+			return actiontable[i].fn;
+	return NULL;
+}
+
+const void *
+wasp_layout_by_name(const char *name)
+{
+	if (!strcmp(name, "tile"))
+		return &layouts[0];
+	if (!strcmp(name, "floating"))
+		return &layouts[1];
+	if (!strcmp(name, "monocle"))
+		return &layouts[2];
+	if (!strcmp(name, "dwindle") || !strcmp(name, "fibonacci"))
+		return &layouts[3];
+	return NULL;
+}
 
 /* function implementations */
 void
@@ -1907,8 +1957,13 @@ keybinding(uint32_t mods, xkb_keysym_t sym)
 	 * processing keys, rather than passing them on to the client for its own
 	 * processing.
 	 */
+	/* keys[]/nkeys are built at runtime by luaconfig.c now (config.lua's
+	 * wasp.keys), not a compile-time array, so this can't use END()/LENGTH()
+	 * anymore -- walk it by count instead. */
+	size_t ki;
 	const Key *k;
-	for (k = keys; k < END(keys); k++) {
+	for (ki = 0; ki < nkeys; ki++) {
+		k = &keys[ki];
 		if (CLEANMASK(mods) == CLEANMASK(k->mod)
 				&& xkb_keysym_to_lower(sym) == xkb_keysym_to_lower(k->keysym)
 				&& k->func) {
@@ -2114,17 +2169,57 @@ maximizenotify(struct wl_listener *listener, void *data)
 		wlr_xdg_surface_schedule_configure(c->surface.xdg);
 }
 
+/* wasp: gaps -- gapsinner/gapsouter/gapsmart are Lua-driven (wasp.gaps,
+ * see luaconfig.h/.c), consumed here by tile()/monocle()/dwindle(). */
+static struct wlr_box
+gappedarea(Monitor *m, int n)
+{
+	/* The usable area tile()/monocle()/dwindle() lay clients out within,
+	 * instead of m->w directly -- insets it by the outer gap on all 4
+	 * sides. gapsmart drops that inset when there's only one tiled window
+	 * on screen (n == 1). Doesn't touch m->w itself; the bar and
+	 * everything else still gets the ungapped value. */
+	struct wlr_box b = m->w;
+	int g = (gapsmart && n == 1) ? 0 : (int)gapsouter;
+
+	b.x += g;
+	b.y += g;
+	b.width -= 2 * g;
+	b.height -= 2 * g;
+	return b;
+}
+
+static struct wlr_box
+insetgap(struct wlr_box b)
+{
+	/* Insets a single client's slot by half the inner gap on each side --
+	 * two adjacent windows that both get this end up gapsinner pixels
+	 * apart in total. */
+	int g = (int)gapsinner / 2;
+
+	b.x += g;
+	b.y += g;
+	b.width -= 2 * g;
+	b.height -= 2 * g;
+	return b;
+}
+
 void
 monocle(Monitor *m)
 {
 	Client *c;
 	int n = 0;
+	struct wlr_box area;
+
+	wl_list_for_each(c, &clients, link)
+		if (VISIBLEON(c, m) && !c->isfloating && !c->isfullscreen)
+			n++;
+	area = gappedarea(m, n);
 
 	wl_list_for_each(c, &clients, link) {
 		if (!VISIBLEON(c, m) || c->isfloating || c->isfullscreen)
 			continue;
-		resize(c, m->w, 0);
-		n++;
+		resize(c, area, 0);
 	}
 	if (n)
 		snprintf(m->ltsymbol, LENGTH(m->ltsymbol), "[%d]", n);
@@ -2924,13 +3019,19 @@ setup(void)
 void
 spawn(const Arg *arg)
 {
+	/* arg->v == NULL falls back to termcmd -- lets static initializers
+	 * (buttons[]'s ClkStatus middle-click, still a compile-time array)
+	 * spawn "whatever the terminal is" without needing termcmd's *value*
+	 * (a runtime-set global now, not a constant expression) at compile
+	 * time. */
+	char **argv = (char **)(arg->v ? arg->v : termcmd);
 	if (fork() == 0) {
 		close(STDIN_FILENO);
 		open("/dev/null", O_RDWR);
 		dup2(STDERR_FILENO, STDOUT_FILENO);
 		setsid();
-		execvp(((char **)arg->v)[0], (char **)arg->v);
-		die("dwl: execvp %s failed:", ((char **)arg->v)[0]);
+		execvp(argv[0], argv);
+		die("dwl: execvp %s failed:", argv[0]);
 	}
 }
 
@@ -2996,30 +3097,89 @@ tile(Monitor *m)
 	unsigned int mw, my, ty;
 	int i, n = 0;
 	Client *c;
+	struct wlr_box area;
 
 	wl_list_for_each(c, &clients, link)
 		if (VISIBLEON(c, m) && !c->isfloating && !c->isfullscreen)
 			n++;
 	if (n == 0)
 		return;
+	area = gappedarea(m, n);
 
 	if (n > m->nmaster)
-		mw = m->nmaster ? (int)roundf(m->w.width * m->mfact) : 0;
+		mw = m->nmaster ? (int)roundf(area.width * m->mfact) : 0;
 	else
-		mw = m->w.width;
+		mw = area.width;
 	i = my = ty = 0;
 	wl_list_for_each(c, &clients, link) {
+		struct wlr_box slot;
 		if (!VISIBLEON(c, m) || c->isfloating || c->isfullscreen)
 			continue;
 		if (i < m->nmaster) {
-			resize(c, (struct wlr_box){.x = m->w.x, .y = m->w.y + my, .width = mw,
-				.height = (m->w.height - my) / (MIN(n, m->nmaster) - i)}, 0);
-			my += c->geom.height;
+			slot = (struct wlr_box){.x = area.x, .y = area.y + my, .width = mw,
+				.height = (area.height - my) / (MIN(n, m->nmaster) - i)};
+			resize(c, insetgap(slot), 0);
+			my += slot.height;
 		} else {
-			resize(c, (struct wlr_box){.x = m->w.x + mw, .y = m->w.y + ty,
-				.width = m->w.width - mw, .height = (m->w.height - ty) / (n - i)}, 0);
-			ty += c->geom.height;
+			slot = (struct wlr_box){.x = area.x + mw, .y = area.y + ty,
+				.width = area.width - mw, .height = (area.height - ty) / (n - i)};
+			resize(c, insetgap(slot), 0);
+			ty += slot.height;
 		}
+		i++;
+	}
+}
+
+void
+dwindle(Monitor *m)
+{
+	/* Adapted from dwl-patches' dwindle patch (fibonacci-spiral tiling:
+	 * each successive window halves whatever space is left, alternating
+	 * horizontal/vertical splits). Reachable from config.lua as the
+	 * "dwindle"/"fibonacci" setlayout target -- see wasp_layout_by_name(). */
+	unsigned int i, n = 0;
+	int nx, ny, nw, nh;
+	int horizontal;
+	Client *c;
+	struct wlr_box area;
+
+	wl_list_for_each(c, &clients, link)
+		if (VISIBLEON(c, m) && !c->isfloating && !c->isfullscreen)
+			n++;
+	if (n == 0)
+		return;
+	area = gappedarea(m, (int)n);
+
+	nx = area.x;
+	ny = area.y;
+	nw = area.width;
+	nh = area.height;
+	horizontal = 1;
+	i = 0;
+
+	wl_list_for_each(c, &clients, link) {
+		struct wlr_box slot;
+		if (!VISIBLEON(c, m) || c->isfloating || c->isfullscreen)
+			continue;
+
+		if (i == n - 1) {
+			slot = (struct wlr_box){nx, ny, nw, nh};
+			resize(c, insetgap(slot), 0);
+		} else if (horizontal) {
+			int w = nw / 2;
+			slot = (struct wlr_box){nx, ny, w, nh};
+			resize(c, insetgap(slot), 0);
+			nx += w;
+			nw -= w;
+		} else {
+			int h = nh / 2;
+			slot = (struct wlr_box){nx, ny, nw, h};
+			resize(c, insetgap(slot), 0);
+			ny += h;
+			nh -= h;
+		}
+
+		horizontal = !horizontal;
 		i++;
 	}
 }
@@ -3048,6 +3208,32 @@ togglefullscreen(const Arg *arg)
 	Client *sel = focustop(selmon);
 	if (sel)
 		setfullscreen(sel, !sel->isfullscreen);
+}
+
+void
+moveresizekb(const Arg *arg)
+{
+	/* Adapted from dwl-patches' moveresizekb patch: nudge/resize the
+	 * focused floating (or floating-layout) client by keyboard, no mouse
+	 * grab needed. arg->v is a heap int[4] {dx, dy, dw, dh} built by
+	 * luaconfig.c's build_key_arg() from a config.lua entry's
+	 * dx/dy/dw/dh fields. */
+	Client *c = focustop(selmon);
+	Monitor *m = selmon;
+	const int *d;
+
+	if (!(m && arg && arg->v && c))
+		return;
+	if (!(c->isfloating || m->lt[m->sellt]->arrange == NULL))
+		return;
+
+	d = arg->v;
+	resize(c, (struct wlr_box){
+		.x = c->geom.x + d[0],
+		.y = c->geom.y + d[1],
+		.width = c->geom.width + d[2],
+		.height = c->geom.height + d[3],
+	}, 1);
 }
 
 void

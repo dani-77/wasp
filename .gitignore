@@ -1,4 +1,4 @@
-dwl
+wasp
 *.o
 *-protocol.c
 *-protocol.h
