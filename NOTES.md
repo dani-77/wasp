@@ -41,6 +41,67 @@ notes before picking any of them up:
    frame-timer-driven interpolation system touching `resize()`/`arrange()`/
    `mapnotify()`/`unmapnotify()`, none of which exist yet.
 
+Two more added 2026-08-12 (not yet ordered relative to the three above):
+
+4. **Output scale**, matching spitfire/niri/MangoWC. dwl already has the
+   raw plumbing -- `MonitorRule.scale` (per-monitor, in `monrules[]`) and
+   `Monitor.b.scale`/`wlr_output_set_scale()` already exist -- it's just
+   entirely static `config.def.h` today, not `config.lua`-driven, and
+   there's no live rescale keybind (spitfire's `Mod+Shift+P`/`M`). Spitfire's
+   `spitfire.output = { scale = 1.0 }` (see its `examples/config.lua`) is
+   the reference shape -- a starting value applied at startup, re-applied
+   live on reload, with dedicated inc/dec keybinds on top. Probably wants
+   its own `wasp.monitors`/`wasp.output`-style config section eventually
+   (name-matched per-output rules, mirroring dwl's own `monrules[]`
+   fields: mfact, nmaster, scale, layout, rotate/reflect, x/y) rather than
+   a single global scale -- scope that properly when picked up, don't
+   just bolt on a lone global number.
+5. **Expose wasp's workspaces to external shells (Utumno,
+   quickshell-d77, helium-d77, fabric-d77).** All four are Daniel's own
+   Quickshell/Fabric/Rust desktop-shell projects (`~/Projectos/{utumno,
+   quickshell-d77,helium-d77,fabric-d77}`) -- bars/launchers/etc. that
+   currently target niri/Hyprland/sway, none of them wasp/dwl yet. Without
+   something exposing workspace state, their bars just won't show any
+   workspace list at all when run against wasp. dwl's own model is tags
+   (dwm-style bitmask, several active at once, per-window multi-tag) which
+   doesn't map 1:1 onto niri-style single-active workspaces -- needs actual
+   design thought, not just a mechanical port. Best bet is almost
+   certainly the standardized **`ext-workspace-v1`** Wayland protocol
+   (what niri implements, and what spitfire's own bar comment already
+   flagged: "Advertised over ext-workspace-v1, so any bar that knows that
+   protocol sees them too") rather than bespoke per-shell integration --
+   one protocol implementation in wasp should cover all four clients (and
+   any other ext-workspace-v1-aware bar) at once, versus Hyprland's
+   approach (its own custom IPC socket, not a standard protocol, not
+   worth mimicking). dwl has no `ext-workspace-v1` support today at all;
+   this is new server-side protocol work, not a patch to adapt.
+6. **Window rules, `wasp.rules` in config.lua.** e.g. Firefox always opens
+   on workspace 9, `d77run` opens floating and centered. Small, well-scoped
+   compared to the rest of this list -- dwl already has exactly this as a
+   static C array, just not Lua-driven yet:
+   ```c
+   typedef struct {
+       const char *id;    /* app_id */
+       const char *title;
+       uint32_t tags;
+       int isfloating;
+       int monitor;
+   } Rule;
+   static const Rule rules[] = { ... };  /* config.def.h, applied in applyrules() */
+   ```
+   Same pattern as everything else this session: make `rules`/`nrules`
+   extern globals (`luaconfig.h`), `load_rules()` in `luaconfig.c` builds
+   them from a `wasp.rules = { { app_id=, title=, tags=, floating=,
+   monitor= }, ... }` array, `dwl.c`'s `applyrules()` switches from the
+   static array to the runtime one. `config.def.h` currently requires at
+   least one rule to exist (a hardcoded comment says so) -- check whether
+   that constraint still needs to hold once rules are optional/Lua-driven,
+   probably doesn't. No centering support in the existing `Rule` struct
+   (`isfloating` only, not position) -- `d77run` floating *and centered*
+   needs a new field or a separate `alwayscenter`-style behavior; dwl-patches
+   has `alwayscenter`/`centeredmaster`/`center-terminal`/`movecenter` as
+   reference material for that part specifically.
+
 ## Core (not patch-derived)
 - **Lua config, live-reloadable — done (2026-08-12), bound-key trigger**:
   `dwl.c`'s `reload()` action (default bind: `mod+shift+r`, see
