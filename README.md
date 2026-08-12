@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/logo.png" width="160" alt="wasp logo"></p>
+<p align="center"><img src="assets/logo-icon.png" width="128" alt="wasp logo"></p>
 
 <h1 align="center">wasp</h1>
 
