@@ -98,9 +98,15 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
    that constraint still needs to hold once rules are optional/Lua-driven,
    probably doesn't. No centering support in the existing `Rule` struct
    (`isfloating` only, not position) -- `d77run` floating *and centered*
-   needs a new field or a separate `alwayscenter`-style behavior; dwl-patches
-   has `alwayscenter`/`centeredmaster`/`center-terminal`/`movecenter` as
-   reference material for that part specifically.
+   needs a new field or a separate `alwayscenter`-style behavior. Reference
+   material for that part specifically, more than one place to draw from
+   (Daniel's note, 2026-08-12): dwl-patches' `alwayscenter`/
+   `centeredmaster`/`center-terminal`/`movecenter`, but also **MangoWC**
+   (dwl-based, so likely the closest/most directly portable of the three)
+   and **Hyprland** (wlroots too, though its floating/rules model is a lot
+   more elaborate than dwl's simple `Rule[]` -- probably more useful for
+   the general *idea* of how a centered-floating rule should feel than for
+   directly portable code).
 
 ## Core (not patch-derived)
 - **Lua config, live-reloadable — done (2026-08-12), bound-key trigger**:
