@@ -12,17 +12,18 @@ DWLDEVCFLAGS = -g -Wpedantic -Wall -Wextra -Wdeclaration-after-statement \
 	-Wfloat-conversion
 
 # CFLAGS / LDFLAGS
-PKGS      = wayland-server xkbcommon libinput pixman-1 fcft $(XLIBS)
+PKGS      = wayland-server xkbcommon libinput pixman-1 fcft lua5.4 $(XLIBS)
 DWLCFLAGS = `$(PKG_CONFIG) --cflags $(PKGS)` $(WLR_INCS) $(DWLCPPFLAGS) $(DWLDEVCFLAGS) $(CFLAGS)
 LDLIBS    = `$(PKG_CONFIG) --libs $(PKGS)` $(WLR_LIBS) -lm $(LIBS)
 
 all: dwl
-dwl: dwl.o util.o
-	$(CC) dwl.o util.o $(DWLCFLAGS) $(LDFLAGS) $(LDLIBS) -o $@
+dwl: dwl.o util.o luaconfig.o
+	$(CC) dwl.o util.o luaconfig.o $(DWLCFLAGS) $(LDFLAGS) $(LDLIBS) -o $@
 dwl.o: dwl.c client.h config.h config.mk cursor-shape-v1-protocol.h \
 	pointer-constraints-unstable-v1-protocol.h wlr-layer-shell-unstable-v1-protocol.h \
-	wlr-output-power-management-unstable-v1-protocol.h xdg-shell-protocol.h
+	wlr-output-power-management-unstable-v1-protocol.h xdg-shell-protocol.h luaconfig.h
 util.o: util.c util.h
+luaconfig.o: luaconfig.c luaconfig.h
 
 # wayland-scanner is a tool which generates C headers and rigging for Wayland
 # protocols, which are specified in XML. wlroots requires you to rig these up
@@ -54,8 +55,8 @@ clean:
 dist: clean
 	mkdir -p dwl-$(VERSION)
 	cp -R LICENSE* Makefile CHANGELOG.md README.md client.h config.def.h \
-		config.mk protocols dwl.1 dwl.c util.c util.h dwl.desktop \
-		dwl-$(VERSION)
+		config.mk protocols dwl.1 dwl.c util.c util.h luaconfig.c luaconfig.h \
+		dwl.desktop dwl-$(VERSION)
 	tar -caf dwl-$(VERSION).tar.gz dwl-$(VERSION)
 	rm -rf dwl-$(VERSION)
 

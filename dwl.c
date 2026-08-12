@@ -74,6 +74,7 @@
 
 #include "util.h"
 #include "drwl.h"
+#include "luaconfig.h"
 
 /* macros */
 #define MAX(A, B)               ((A) > (B) ? (A) : (B))
@@ -3538,6 +3539,7 @@ main(int argc, char *argv[])
 	/* Wayland requires XDG_RUNTIME_DIR for creating its communications socket */
 	if (!getenv("XDG_RUNTIME_DIR"))
 		die("XDG_RUNTIME_DIR must be set");
+	waspconfig_load();
 	setup();
 	run(startup_cmd);
 	cleanup();
