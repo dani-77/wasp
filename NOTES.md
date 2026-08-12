@@ -8,11 +8,27 @@ recompile. Add to this as things come to mind; nothing here needs to be
 decided all at once.
 
 ## Core (not patch-derived)
-- Lua config, `~/.config/wasp/config.lua`, live-reloadable — see the design
-  discussion in project memory (embed `lua_State*`, parse into config
-  structs, reload on file-watch or a bound key). Load-once-at-startup is
-  done; the actual reload trigger (file-watch or bound key re-running
-  `waspconfig_load()`) is still open.
+- **Lua config, live-reloadable — done (2026-08-12), bound-key trigger**:
+  `dwl.c`'s `reload()` action (default bind: `mod+shift+r`, see
+  `examples/config.lua`) calls `waspconfig_load()` again and re-applies
+  whatever of it can take effect without a restart, live: **gaps** (free —
+  `arrange()` already reads `gapsinner`/`gapsouter`/`gapsmart` fresh every
+  call, no extra plumbing needed), the **bar**'s visibility/position/
+  colors (`updatebar()` + `arrangelayers()` + `drawbars()`), every
+  existing client's **border color** (walks `clients`, re-applies
+  `colors[Scheme*][ColBorder]` per client's current
+  focused/urgent/normal state via `client_set_border_color()`), the root
+  **background**, and **keyboard** repeat speed + xkb layout (rebuilds
+  and reassigns the keymap on the live `kb_group`, same calls
+  `createkeyboardgroup()` makes at startup). **Keybindings themselves**
+  are live for free — `keybinding()`'s dispatch loop already walks the
+  current `keys[]`/`nkeys` globals on every keypress, no cache to
+  invalidate. Not yet live: border *width* on already-mapped clients
+  (would need a per-client `resize()`/geometry recompute, not just a
+  color swap) and `wasp.autostart` (deliberately -- see below). File-watch
+  based reload (as opposed to a bound key) was the other option
+  considered; not implemented, bound key covers the actual want (know
+  when you've just edited the file) more directly and more simply.
 - Built-in toggleable status bar (`wasp.bar = { enable, height }` or
   similar). **Decided (2026-08-12)**: base it on dwl-patches' `bar` +
   `barconfig` rather than porting spitfire's bitmap-font approach — it's
@@ -60,8 +76,25 @@ decided all at once.
 - **borders** / **smartborders** / **simpleborders** — window border
   rendering/behavior (colors should come from `config.lua`, same as
   spitfire's `spitfire.border`).
-- **autostart** — but embedded as a `wasp.autostart({...})`-style call in
-  `config.lua` (like spitfire), not a static C array in `config.h`.
+- **autostart** — **done (2026-08-12)**: `wasp.autostart = { {argv...},
+  ... }` in `config.lua` (a plain array of argv arrays, wasp's own
+  existing convention — same shape as `wasp.terminal`/`wasp.menu` one
+  level up — rather than spitfire's `wasp.autostart({...})` function-call
+  syntax or the dwl-patches reference's flat NULL-separated C array).
+  `luaconfig.c`'s `load_autostart()` only *parses* it into the
+  `autostart`/`nautostart` globals; `dwl.c`'s `autostartexec()` (adapted
+  from dwl-patches' `autostart` patch: fork+execvp each one directly, no
+  shell, `setsid()` so each becomes its own process group) is what
+  actually spawns them, called once from `run()` right after the backend
+  starts. Deliberately **not** part of `waspconfig_load()`/`reload()`
+  itself — if it were, every hot-reload would respawn everything in the
+  list all over again. `cleanup()` kills each one's whole process group
+  (`kill(-pid, ...)`, not just the direct child -- verified live: a
+  `{"sh","-c","sleep 100"}` entry's grandchild `sleep` died too, a plain
+  positive-pid kill would've orphaned it) and reaps it; `handlesig()`'s
+  `SIGCHLD` handler nulls out any `autostart_pids[]` entry that already
+  exited on its own first, so `cleanup()` never risks signaling a pid the
+  kernel has since handed to an unrelated process.
 
 ## Keyboard
 - **Layout switching + repeat speed — done (2026-08-12)**: `wasp.keyboard =
@@ -110,6 +143,15 @@ decided all at once.
   the clock. Battery path is detected, not hardcoded — scans
   `/sys/class/power_supply/` for the first `BAT*` entry (`BAT1` on this
   laptop, `BAT0` on others), same pattern as `pwm`'s
-  `battery_file_search()` and `spitfire`'s `read_battery_status()`. Once
-  `autostart` lands in `config.lua` (see below), this should be spawned
-  from there instead of piped by hand.
+  `battery_file_search()` and `spitfire`'s `read_battery_status()`.
+  **Correction (2026-08-12)**: the earlier "spawn it from `wasp.autostart`"
+  plan above doesn't actually work mechanically -- stdin is fixed at the
+  moment a process is launched, so nothing wasp does *after* it's already
+  running (autostart included, whenever that lands) can retroactively
+  rewire its own stdin to a spawned child's stdout. The pipe has to exist
+  before/at exec time. Fixed properly instead: **`scripts/wasp-session`**,
+  a wrapper (`wasp-statusbar | exec wasp`) that `wasp.desktop`'s `Exec=`
+  now points at instead of `wasp` directly, installed alongside it by
+  `make install`. So through a greeter it's automatic; for local/dev
+  testing without installing, `scripts/statusbar.sh | ./wasp` by hand is
+  still the way (README's Configuring section has both).

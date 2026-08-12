@@ -56,6 +56,15 @@ wasp.menu = { "wmenu-run" }
 -- What "mod" means below. One of "alt" | "ctrl" | "super" | "shift".
 wasp.modkey = "alt"
 
+-- Autostart -- one argv array per program, run once (fork+execvp, no
+-- shell) right after startup, killed on exit. Uncomment/add whatever you
+-- actually want running -- wasp has no opinion on wallpaper/idle/notifier
+-- daemons etc., same as upstream dwl.
+wasp.autostart = {
+  -- { "swaybg", "-i", "/path/to/wallpaper.png" },
+  -- { "mako" }, -- notifications
+}
+
 -- Keybindings ----------------------------------------------------------
 -- Each entry: { mods = {...}, key = "<xkb keysym name>", action = "...",
 --               <action-specific fields> }
@@ -86,6 +95,7 @@ wasp.modkey = "alt"
 --   quit              (none)
 --   chvt              vt = <number>         switch to a different virtual terminal
 --   moveresizekb      dx = dy = dw = dh = <pixels>   nudge/resize the focused floating window
+--   reload            (none)                re-read config.lua live -- see the note above wasp.autostart below for what this does/doesn't cover
 wasp.keys = {}
 local keys = wasp.keys
 
@@ -98,6 +108,17 @@ end
 -- Launchers
 bind({ "mod", "shift" }, "Return", "spawn-terminal")
 bind({ "mod" },          "p",      "spawn-menu")
+
+-- Media keys — dedicated hardware keys, so no modifier needed (they can't
+-- collide with anything text-related; `mods = {}` means "bare key").
+-- Via ALSA (amixer); swap "Master" for whatever `amixer scontrols` lists
+-- on your system if it differs, or for
+-- "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+-/mute-toggle" (PipeWire) /
+-- "pactl set-sink-volume/set-sink-mute @DEFAULT_SINK@ ..." (PulseAudio via
+-- pactl) if ALSA isn't what your system actually mixes through.
+bind({}, "XF86AudioRaiseVolume", "spawn", { cmd = { "amixer", "-q", "set", "Master", "5%+" } })
+bind({}, "XF86AudioLowerVolume", "spawn", { cmd = { "amixer", "-q", "set", "Master", "5%-" } })
+bind({}, "XF86AudioMute",        "spawn", { cmd = { "amixer", "-q", "set", "Master", "toggle" } })
 
 -- Window navigation
 bind({ "mod" }, "j",    "focusstack", { dir = 1 })
@@ -151,6 +172,15 @@ bind({ "mod", "shift" }, "parenright",  "tag",  { tag = "all" })
 -- Window/session control
 bind({ "mod", "shift" }, "c", "killclient")
 bind({ "mod", "shift" }, "q", "quit")
+
+-- Hot-reload -- re-reads this file and re-applies gaps, the bar's
+-- visibility/position/colors, every window's border color, the
+-- background, keyboard layout/repeat speed, and keybindings themselves,
+-- all live, no restart. Border *width* on already-open windows and
+-- wasp.autostart are the two things that still need a restart to pick up
+-- (autostart deliberately only ever runs once, at real startup -- see
+-- NOTES.md; otherwise every reload would relaunch everything in it).
+bind({ "mod", "shift" }, "r", "reload")
 
 -- VT switching (Ctrl-Alt-Fx) and Ctrl-Alt-Backspace, same as upstream dwl
 for vt = 1, 12 do

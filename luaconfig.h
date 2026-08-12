@@ -73,9 +73,21 @@ extern int gapsmart;
 extern Key *keys;
 extern size_t nkeys;
 
+/* wasp.autostart = { {"swaybg","-i","~/wallpaper.png"}, {"foot"} } -- an
+ * array of argv arrays (NULL-terminated overall, each argv itself
+ * NULL-terminated -- same shape as termcmd/menucmd, one level up). Only
+ * ever *read* here -- actually spawning them (dwl.c's autostartexec(),
+ * fork+execvp once at real startup) is deliberately not part of
+ * waspconfig_load() itself, or every hot-reload (see reload() in dwl.c)
+ * would respawn everything all over again. */
+extern const char ***autostart;
+extern size_t nautostart;
+
 /* Loads (or reloads) the config, overwriting the globals above in place.
  * Safe to call again later for a hot-reload once callers redraw/rearrange
- * afterwards -- nothing here restarts the compositor. */
+ * afterwards -- nothing here restarts the compositor, and it never
+ * touches autostart_pids/spawns anything itself (see dwl.c's
+ * autostartexec() vs. reload()). */
 void waspconfig_load(void);
 
 /* Bridge into dwl.c: luaconfig.c is a separate translation unit and can't

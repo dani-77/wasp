@@ -48,10 +48,18 @@ working:
 - **Session file**: `make install` installs the `wasp` binary and a
   `wasp.desktop` under `wayland-sessions`, so greetd (or any greeter that
   reads that directory) can list and select it.
+- **Autostart**: `wasp.autostart = { {"swaybg", "-i", "wall.png"}, ... }` —
+  an array of argv arrays, fork+exec'd once at startup (no shell), killed
+  cleanly on exit.
+- **Hot-reload**: a bound key (`mod+shift+r` by default) re-reads
+  `config.lua` and re-applies gaps, the bar (visibility/position/colors),
+  every window's border color, the background, keyboard layout/repeat
+  speed, and keybindings themselves — all live, no restart. Border
+  *width* on already-open windows and `wasp.autostart` still need one
+  (autostart only ever runs once on purpose, so reload doesn't relaunch
+  everything in it).
 
-Not done yet: autostart, mouse-drag resize variety, more border styles, and
-actually *reloading* the config without restarting (right now it's read
-once at startup — the reload trigger itself is still to come). The full
+Not done yet: mouse-drag resize variety and more border styles. The full
 running list, plus which [dwl-patches] are earmarked for which feature and
 why, lives in [`NOTES.md`](NOTES.md) — that's the file to check for current
 plans, not this README.
@@ -90,10 +98,17 @@ coming.
 
 For the bar's right-side status text, pipe something into wasp's `stdin`
 (it has no built-in widgets of its own, same as upstream dwl) —
-`scripts/statusbar.sh` is a ready-to-use one:
+`scripts/statusbar.sh` is a ready-to-use one. Since stdin is fixed at
+launch, this has to happen at the point wasp itself is started, not
+after — `wasp.desktop`'s `Exec=` already points at a wrapper
+(`scripts/wasp-session`, installed as `wasp-session`) that does exactly
+that, so if you launch wasp through `make install` + a greeter (greetd,
+...), it's wired up automatically and there's nothing else to do.
+
+For local/dev testing, without installing, do it by hand instead:
 
 ```sh
-scripts/statusbar.sh | wasp
+scripts/statusbar.sh | ./wasp
 ```
 
 ## Credit

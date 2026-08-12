@@ -40,6 +40,8 @@ int repeat_delay;
 unsigned int gapsinner;
 unsigned int gapsouter;
 int gapsmart;
+const char ***autostart;
+size_t nautostart;
 
 /* Primary modifier for config.lua keybinds that say mods = {"mod", ...} --
  * set via wasp.modkey ("alt"/"ctrl"/"super"/"shift"), defaults to Alt (what
@@ -131,6 +133,9 @@ set_defaults(void)
 	gapsinner = 0;
 	gapsouter = 0;
 	gapsmart = 0;
+	autostart = NULL; /* re-parsed data only -- doesn't touch already-spawned
+	                    * processes, see autostartexec()/reload() in dwl.c */
+	nautostart = 0;
 }
 
 /* ~/.config/wasp/config.lua, or $XDG_CONFIG_HOME/wasp/config.lua if set.
@@ -414,6 +419,56 @@ load_terminal_menu(lua_State *L, int wasptbl)
 	lua_pop(L, 1);
 }
 
+/* wasp.autostart = { {"swaybg","-i","~/wallpaper.png"}, {"foot"} } -- an
+ * array of argv arrays, same shape as termcmd/menucmd one level up. Only
+ * parses/stores the data here (dwl.c's autostartexec() is what actually
+ * spawns it, once, at real startup -- see luaconfig.h). Entries that
+ * aren't tables, or are empty tables, are skipped rather than aborting
+ * the whole list. */
+static void
+load_autostart(lua_State *L, int wasptbl)
+{
+	int t, n, i;
+	const char ***list;
+	size_t count = 0;
+
+	lua_getfield(L, wasptbl, "autostart");
+	if (!lua_istable(L, -1)) {
+		lua_pop(L, 1);
+		return;
+	}
+	t = lua_gettop(L);
+	n = (int)lua_rawlen(L, t);
+	if (n <= 0) {
+		lua_pop(L, 1);
+		return;
+	}
+
+	list = malloc((size_t)(n + 1) * sizeof(const char **));
+	if (!list) {
+		lua_pop(L, 1);
+		return;
+	}
+
+	for (i = 1; i <= n; i++) {
+		const char **argv;
+		lua_rawgeti(L, t, i);
+		argv = lua_istable(L, -1) ? build_argv(L, lua_gettop(L)) : NULL;
+		lua_pop(L, 1);
+		if (argv)
+			list[count++] = argv;
+	}
+	list[count] = NULL;
+
+	if (count > 0) {
+		autostart = list; /* leaked on reload -- see NOTES.md */
+		nautostart = count;
+	} else {
+		free(list);
+	}
+	lua_pop(L, 1); /* autostart table */
+}
+
 /* Builds the Arg for one wasp.keys[i] entry, based on its action name.
  * Every action wasp_lookup_action() (dwl.c) knows about needs a case here
  * -- see the comment above dwl.c's actiontable for the full list. */
@@ -619,6 +674,7 @@ waspconfig_load(void)
 		load_modkey(L, wasptbl);       /* before load_keys(): "mod" resolution */
 		load_terminal_menu(L, wasptbl); /* before load_keys(): spawn-terminal/-menu */
 		load_keys(L, wasptbl);
+		load_autostart(L, wasptbl);
 	}
 	lua_pop(L, 1); /* the wasp global (or whatever lua_getglobal pushed) */
 

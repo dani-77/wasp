@@ -266,6 +266,7 @@ static void arrange(Monitor *m);
 static void arrangelayer(Monitor *m, struct wl_list *list,
 		struct wlr_box *usable_area, int exclusive);
 static void arrangelayers(Monitor *m);
+static void autostartexec(void);
 static void axisnotify(struct wl_listener *listener, void *data);
 static bool baracceptsinput(struct wlr_scene_buffer *buffer, double *sx, double *sy);
 static void bufdestroy(struct wlr_buffer *buffer);
@@ -343,6 +344,7 @@ static void pointerfocus(Client *c, struct wlr_surface *surface,
 		double sx, double sy, uint32_t time);
 static void powermgrsetmode(struct wl_listener *listener, void *data);
 static void quit(const Arg *arg);
+static void reload(const Arg *arg);
 static void rendermon(struct wl_listener *listener, void *data);
 static void requestdecorationmode(struct wl_listener *listener, void *data);
 static void requeststartdrag(struct wl_listener *listener, void *data);
@@ -387,6 +389,8 @@ static void zoom(const Arg *arg);
 
 /* variables */
 static pid_t child_pid = -1;
+static pid_t *autostart_pids; /* wasp.autostart -- see autostartexec()/cleanup()/handlesig() */
+static size_t autostart_pids_len;
 static int locked;
 static void *exclusive_focus;
 static struct wl_display *dpy;
@@ -526,6 +530,7 @@ static const struct { const char *name; ActionFn fn; } actiontable[] = {
 	{ "quit",             quit },
 	{ "chvt",             chvt },
 	{ "moveresizekb",     moveresizekb },
+	{ "reload",           reload },
 };
 
 ActionFn
@@ -701,6 +706,36 @@ arrangelayers(Monitor *m)
 			exclusive_focus = l;
 			client_notify_enter(l->layer_surface->surface, wlr_seat_get_keyboard(seat));
 			return;
+		}
+	}
+}
+
+void
+autostartexec(void)
+{
+	/* wasp.autostart in config.lua -- an array of argv arrays, parsed by
+	 * luaconfig.c's load_autostart() into the `autostart`/`nautostart`
+	 * globals (same NULL-terminated-argv shape as termcmd/menucmd, one
+	 * level up). Adapted from dwl-patches' autostart patch: fork+execvp
+	 * each one directly (no shell), track pids so cleanup() can ask them
+	 * to exit too instead of leaving them orphaned. Called once at real
+	 * startup (see run()) -- NOT part of reload()'s config.lua re-read,
+	 * or every hot-reload would respawn everything all over again. */
+	size_t i;
+
+	if (!autostart || nautostart == 0)
+		return;
+
+	autostart_pids = calloc(nautostart, sizeof(pid_t));
+	if (!autostart_pids)
+		return;
+	autostart_pids_len = nautostart;
+
+	for (i = 0; i < nautostart; i++) {
+		if ((autostart_pids[i] = fork()) == 0) {
+			setsid();
+			execvp(autostart[i][0], (char *const *)autostart[i]);
+			die("wasp: autostart execvp %s:", autostart[i][0]);
 		}
 	}
 }
@@ -909,6 +944,23 @@ cleanup(void)
 	xwayland = NULL;
 #endif
 	wl_display_destroy_clients(dpy);
+
+	if (autostart_pids) {
+		size_t i;
+		for (i = 0; i < autostart_pids_len; i++) {
+			if (autostart_pids[i] > 0) {
+				/* negative pid == kill the whole process group, not just
+				 * the direct child -- autostartexec() setsid()s each one,
+				 * so this also reaches anything *it* spawned (e.g. a
+				 * "sh -c ..." entry's own children), same convention
+				 * run()'s child_pid cleanup already uses below. A plain
+				 * kill(pid, ...) would leave those orphaned. */
+				kill(-autostart_pids[i], SIGTERM);
+				waitpid(autostart_pids[i], NULL, 0);
+			}
+		}
+	}
+
 	if (child_pid > 0) {
 		kill(-child_pid, SIGTERM);
 		waitpid(child_pid, NULL, 0);
@@ -1904,10 +1956,20 @@ gpureset(struct wl_listener *listener, void *data)
 void
 handlesig(int signo)
 {
-	if (signo == SIGCHLD)
-		while (waitpid(-1, NULL, WNOHANG) > 0);
-	else if (signo == SIGINT || signo == SIGTERM)
+	if (signo == SIGCHLD) {
+		pid_t pid;
+		while ((pid = waitpid(-1, NULL, WNOHANG)) > 0) {
+			/* Null out any autostart_pids[] entry that already exited on
+			 * its own, so cleanup() doesn't later kill()/waitpid() a pid
+			 * the kernel may since have handed to some unrelated process. */
+			size_t i;
+			for (i = 0; i < autostart_pids_len; i++)
+				if (autostart_pids[i] == pid)
+					autostart_pids[i] = -1;
+		}
+	} else if (signo == SIGINT || signo == SIGTERM) {
 		quit(NULL);
+	}
 }
 
 void
@@ -2499,6 +2561,58 @@ quit(const Arg *arg)
 }
 
 void
+reload(const Arg *arg)
+{
+	/* Re-reads config.lua and re-applies whatever of it can take effect
+	 * without a restart: gaps (arrange() already reads
+	 * gapsinner/gapsouter/gapsmart live, nothing extra needed there),
+	 * the bar's visibility/position/colors, every existing client's
+	 * border color, the root background, and keyboard repeat speed + xkb
+	 * layout. Keybindings too, for free -- keybinding()'s dispatch loop
+	 * already walks the live keys[]/nkeys globals on every keypress.
+	 * NOT yet live: border *width* on already-mapped clients (would need
+	 * a resize()/geometry recompute per client, not just a color swap) --
+	 * see NOTES.md. */
+	Monitor *m;
+	Client *c;
+
+	waspconfig_load();
+
+	if (kb_group) {
+		struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+		struct xkb_keymap *keymap = context
+			? xkb_keymap_new_from_names(context, &xkb_rules, XKB_KEYMAP_COMPILE_NO_FLAGS)
+			: NULL;
+		if (keymap) {
+			wlr_keyboard_set_keymap(&kb_group->wlr_group->keyboard, keymap);
+			xkb_keymap_unref(keymap);
+		}
+		if (context)
+			xkb_context_unref(context);
+		wlr_keyboard_set_repeat_info(&kb_group->wlr_group->keyboard, repeat_rate, repeat_delay);
+	}
+
+	if (root_bg)
+		wlr_scene_rect_set_color(root_bg, rootcolor);
+
+	wl_list_for_each(c, &clients, link) {
+		if (c->isurgent)
+			client_set_border_color(c, (float[])COLOR(colors[SchemeUrg][ColBorder]));
+		else if (c == focustop(c->mon))
+			client_set_border_color(c, (float[])COLOR(colors[SchemeSel][ColBorder]));
+		else
+			client_set_border_color(c, (float[])COLOR(colors[SchemeNorm][ColBorder]));
+	}
+
+	wl_list_for_each(m, &mons, link) {
+		updatebar(m);
+		arrangelayers(m); /* usable-area/bar-toggle re-arrange, if it changed */
+		arrange(m);        /* unconditional, so a gaps-only change re-flows too */
+	}
+	drawbars();
+}
+
+void
 rendermon(struct wl_listener *listener, void *data)
 {
 	/* This function is called every time an output is ready to display a frame,
@@ -2600,7 +2714,9 @@ run(char *startup_cmd)
 	if (!wlr_backend_start(backend))
 		die("startup: backend_start");
 
-	/* Now that the socket exists and the backend is started, run the startup command */
+	/* Now that the socket exists and the backend is started, run wasp.autostart
+	 * (see autostartexec()) and the startup command */
+	autostartexec();
 	if (startup_cmd) {
 		if ((child_pid = fork()) < 0)
 			die("startup: fork:");

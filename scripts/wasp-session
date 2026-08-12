@@ -1,0 +1,16 @@
+#!/bin/sh
+# wasp session wrapper -- installed as $(PREFIX)/bin/wasp-session, this is
+# what wasp.desktop actually points greetd (or any other greeter) at,
+# *not* the wasp binary directly.
+#
+# Why this needs to exist at all: dwl's bar has no built-in status
+# widgets -- it only ever shows whatever text is piped into its own
+# stdin (see scripts/statusbar.sh). But stdin is fixed at the moment a
+# process is launched; nothing wasp does *after* startup (autostart
+# included, once that lands -- see NOTES.md) can retroactively rewire its
+# own stdin to a spawned child's output. The pipe has to be set up by
+# whatever launches wasp in the first place. That's this script.
+#
+# Not needed for local/dev testing -- `scripts/statusbar.sh | ./wasp`
+# from the repo does the same thing directly.
+exec wasp-statusbar | exec wasp

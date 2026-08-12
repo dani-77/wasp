@@ -65,6 +65,10 @@ install: wasp
 	rm -f $(DESTDIR)$(PREFIX)/bin/wasp
 	cp -f wasp $(DESTDIR)$(PREFIX)/bin
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/wasp
+	cp -f scripts/statusbar.sh $(DESTDIR)$(PREFIX)/bin/wasp-statusbar
+	chmod 755 $(DESTDIR)$(PREFIX)/bin/wasp-statusbar
+	cp -f scripts/wasp-session $(DESTDIR)$(PREFIX)/bin/wasp-session
+	chmod 755 $(DESTDIR)$(PREFIX)/bin/wasp-session
 	mkdir -p $(DESTDIR)$(MANDIR)/man1
 	cp -f dwl.1 $(DESTDIR)$(MANDIR)/man1
 	chmod 644 $(DESTDIR)$(MANDIR)/man1/dwl.1
@@ -72,7 +76,8 @@ install: wasp
 	cp -f wasp.desktop $(DESTDIR)$(DATADIR)/wayland-sessions/wasp.desktop
 	chmod 644 $(DESTDIR)$(DATADIR)/wayland-sessions/wasp.desktop
 uninstall:
-	rm -f $(DESTDIR)$(PREFIX)/bin/wasp $(DESTDIR)$(MANDIR)/man1/dwl.1 \
+	rm -f $(DESTDIR)$(PREFIX)/bin/wasp $(DESTDIR)$(PREFIX)/bin/wasp-statusbar \
+		$(DESTDIR)$(PREFIX)/bin/wasp-session $(DESTDIR)$(MANDIR)/man1/dwl.1 \
 		$(DESTDIR)$(DATADIR)/wayland-sessions/wasp.desktop
 
 .SUFFIXES: .c .o
