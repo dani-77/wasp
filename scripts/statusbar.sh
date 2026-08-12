@@ -67,7 +67,20 @@ clock() {
 	date '+%a %d %b %H:%M'
 }
 
+# Piped into wasp (directly, or via scripts/wasp-session): once wasp exits,
+# this side of the pipe is still alive and blocked in `sleep`, so it won't
+# notice for up to a whole sleep interval -- its next printf then fails
+# loudly (SIGPIPE/EPIPE, "broken pipe" from the shell's printf builtin)
+# before it finally exits, both delaying session teardown and spamming an
+# alarming-looking (but harmless) error. Trapping TERM/INT/PIPE and
+# backgrounding the sleep (so a signal interrupts `wait` immediately
+# instead of only being noticed once the sleep completes on its own) fixes
+# both: exits right away, silently, whichever of the two ways it finds out
+# (a session-teardown signal, or the pipe actually breaking).
+trap 'exit 0' TERM INT PIPE
+
 while :; do
-	printf '%s\n' "$(cpu) | $(ram) | $(volume) | $(battery) | $(clock)"
-	sleep 5
+	printf '%s\n' "$(cpu) | $(ram) | $(volume) | $(battery) | $(clock)" || exit 0
+	sleep 5 &
+	wait $! 2>/dev/null
 done

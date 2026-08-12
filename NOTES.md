@@ -7,6 +7,40 @@ wasp's own model: config driven live from `config.lua`, not `config.h` +
 recompile. Add to this as things come to mind; nothing here needs to be
 decided all at once.
 
+## Up next (2026-08-12, Daniel's stated order)
+Three things, in this order — not started yet, logging the order/scoping
+notes before picking any of them up:
+
+1. **Keyboard-only window resize/move.** **Scoped down (2026-08-12)**:
+   not a sway/i3 modal resize-mode after all — Daniel's call was to keep
+   the *floating*-window part to "the usual dwl/dwm scheme" (keyboard
+   increments/nudges), which is already exactly what `moveresizekb` does
+   (done, see below — arrow keys move, shift+arrows resize, fixed pixel
+   deltas per press). For *tiled* windows, the dwm/dwl-usual story is
+   already there too: `setmfact` (master/stack boundary, `mod+h`/`mod+l`)
+   and `incnmaster` (window count in master, `mod+i`/`mod+d`) — no
+   per-stack-client ratio exists in dwl's simpler fixed master-stack
+   model (unlike sway/i3's binary-tree layout), and that's fine, not the
+   goal here. No modal/transient keybinding-state mechanism needed. So:
+   this item may already be *done* in substance — check with Daniel
+   whether anything concrete is still missing before starting more work
+   here, rather than assuming a gap.
+2. **Scratchpad.** Reference: spitfire already has this working twice --
+   a single anonymous slot (`spitfire.window.toggle_scratchpad()`) and a
+   named/spawn-on-first-use one keyed by `app_id`
+   (`spitfire.scratchpad.toggle(name, spawncmd, app_id, w_frac, h_frac)`),
+   see `~/Projectos/spitfire/examples/config.lua`. dwl-patches has
+   `namedscratchpads` and `simple_scratchpad` as reference material for
+   the C side (window hide/show via `wlr_scene_node_set_enabled` +
+   tag/floating juggling, not full unmap/remap).
+3. **Animations, MangoWC-style.** MangoWC (`mangowm/mango`) is the
+   confirmed real dwl fork precedent for this (see project memory) --
+   need to actually read its source for how it drives open/close/move/
+   tag-switch tweening on top of `wlr_scene` before designing wasp's own;
+   haven't done that read yet. Biggest lift of the three -- needs a
+   frame-timer-driven interpolation system touching `resize()`/`arrange()`/
+   `mapnotify()`/`unmapnotify()`, none of which exist yet.
+
 ## Core (not patch-derived)
 - **Lua config, live-reloadable — done (2026-08-12), bound-key trigger**:
   `dwl.c`'s `reload()` action (default bind: `mod+shift+r`, see
@@ -104,6 +138,26 @@ decided all at once.
   `xkb_keymap_new_from_names()` directly) and `repeat_rate`/`repeat_delay`
   globals. Applied once at startup, same as everything else pending the
   general reload story above.
+- **Resolved, 2026-08-12 — was stale post-reload state, not a real bug**:
+  AltGr+7 was switching to workspace 7 instead of typing `{` on Daniel's
+  PT layout. Root cause turned out to be that a `reload()` (bound key,
+  not a full restart) hadn't fully applied an earlier `layout = "us"` →
+  `"pt"` change -- a full session logout/login fixed it immediately,
+  confirming `wasp.keyboard.layout = "pt"` itself was already correct,
+  not an actual Alt-vs-AltGr keysym/modifier collision as first
+  suspected. So: **`reload()`'s keyboard keymap swap has a known
+  limitation** -- rebuilding and reassigning the keymap on the live
+  `kb_group` (see `reload()` in `dwl.c`) isn't always enough to fully
+  pick up a *layout* change; a real restart is more reliable for that
+  specific case. Checked wlroots' public `wlr_keyboard_group` API for an
+  obvious fix (e.g. resetting each individual member keyboard, not just
+  the group's own virtual one) -- nothing exposed publicly beyond what
+  `reload()` already does (`struct wlr_keyboard_group`'s member-device
+  list is private/internal, not reachable from `dwl.c`), so not chasing
+  this further without a clearer lead. In practice: gaps/bar/colors/
+  repeat-speed reload live reliably; a keyboard *layout* change might
+  need a restart to fully take -- worth keeping in mind, not urgent to
+  fix blind.
 
 ## Licensing
 - **Done (2026-08-12)**: split license, since wasp now has original code of
@@ -155,3 +209,24 @@ decided all at once.
   `make install`. So through a greeter it's automatic; for local/dev
   testing without installing, `scripts/statusbar.sh | ./wasp` by hand is
   still the way (README's Configuring section has both).
+  **Bug fixed (2026-08-12)**: quitting wasp (`mod+shift+q`) left
+  `wasp-statusbar` (the pipe's write side) running -- it's a separate
+  process the shell set up, wasp has no handle on it -- so it wouldn't
+  notice for up to its 5s sleep, then died noisily (SIGPIPE/EPIPE on its
+  next `printf`, surfaced as `printf: printf: I/O error` plus, apparently,
+  a Rust-flavored `Io error: broken pipe (os error 32)` / `Error:
+  ExitFailure(1)` from whatever supervises the session -- looks like
+  greetd's own reporting of the session command's messy exit). Fixed:
+  `scripts/statusbar.sh` now traps `TERM`/`INT`/`PIPE` and backgrounds its
+  `sleep` (`sleep 5 & wait $!`, so a trapped signal interrupts the wait
+  immediately instead of only being noticed once the sleep completes) --
+  verified live, a `SIGTERM` now kills it instantly (`time kill -TERM
+  $pid` => 0,000s) instead of the printf-failure path. If a session
+  teardown signal reaches it (the realistic path -- it shares the
+  `wasp-session` script's process group), exit is immediate; a pipe that
+  merely goes silent with no signal (e.g. testing `wasp` standalone by
+  hand) is still bounded by the 5s sleep, but now exits clean and quiet
+  instead of erroring. Didn't chase tightening that remaining ~5s tail
+  further (would mean polling in ~1s slices) -- not worth the extra
+  wakeups for a cosmetic tail latency on an already-declining
+  responsiveness ask (see the volume-instant-refresh discussion above).
