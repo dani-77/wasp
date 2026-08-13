@@ -21,12 +21,11 @@ static char *tags[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
 /* logging */
 static int log_level = WLR_ERROR;
 
-static const Rule rules[] = {
-	/* app_id             title       tags mask     isfloating   monitor */
-	{ "Gimp_EXAMPLE",     NULL,       0,            1,           -1 }, /* Start on currently visible tags floating, not tiled */
-	{ "firefox_EXAMPLE",  NULL,       1 << 8,       0,           -1 }, /* Start on ONLY tag "9" */
-    /* default/example rule: can be changed but cannot be eliminated; at least one rule must exist */
-};
+/* rules[] used to live here as a static compile-time array, but is
+ * Lua-driven now -- see luaconfig.h/.c and ~/.config/wasp/config.lua's
+ * wasp.rules. set_defaults() in luaconfig.c defaults to no rules at all
+ * (unlike keys, an empty rule set is a perfectly safe default -- nothing
+ * about it can lock you out). */
 
 /* layout(s) -- indices here are what wasp_layout_by_name() in dwl.c maps
  * config.lua's setlayout `layout = "..."` strings onto ("tile", "floating",

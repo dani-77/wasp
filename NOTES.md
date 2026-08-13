@@ -76,38 +76,22 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
    approach (its own custom IPC socket, not a standard protocol, not
    worth mimicking). dwl has no `ext-workspace-v1` support today at all;
    this is new server-side protocol work, not a patch to adapt.
-6. **Window rules, `wasp.rules` in config.lua.** e.g. Firefox always opens
-   on workspace 9, `d77run` opens floating and centered. Small, well-scoped
-   compared to the rest of this list -- dwl already has exactly this as a
-   static C array, just not Lua-driven yet:
-   ```c
-   typedef struct {
-       const char *id;    /* app_id */
-       const char *title;
-       uint32_t tags;
-       int isfloating;
-       int monitor;
-   } Rule;
-   static const Rule rules[] = { ... };  /* config.def.h, applied in applyrules() */
-   ```
-   Same pattern as everything else this session: make `rules`/`nrules`
-   extern globals (`luaconfig.h`), `load_rules()` in `luaconfig.c` builds
-   them from a `wasp.rules = { { app_id=, title=, tags=, floating=,
-   monitor= }, ... }` array, `dwl.c`'s `applyrules()` switches from the
-   static array to the runtime one. `config.def.h` currently requires at
-   least one rule to exist (a hardcoded comment says so) -- check whether
-   that constraint still needs to hold once rules are optional/Lua-driven,
-   probably doesn't. No centering support in the existing `Rule` struct
-   (`isfloating` only, not position) -- `d77run` floating *and centered*
-   needs a new field or a separate `alwayscenter`-style behavior. Reference
-   material for that part specifically, more than one place to draw from
-   (Daniel's note, 2026-08-12): dwl-patches' `alwayscenter`/
-   `centeredmaster`/`center-terminal`/`movecenter`, but also **MangoWC**
-   (dwl-based, so likely the closest/most directly portable of the three)
-   and **Hyprland** (wlroots too, though its floating/rules model is a lot
-   more elaborate than dwl's simple `Rule[]` -- probably more useful for
-   the general *idea* of how a centered-floating rule should feel than for
-   directly portable code).
+6. ~~**Window rules, `wasp.rules` in config.lua.**~~ **Done (2026-08-13)**
+   -- see "Core" below for the implementation. Research trail kept: the
+   `center` field's design came directly from reading **mwc**
+   (`dqrk0jeste/mwc`, `src/toplevel.c`'s `toplevel_handle_map()`) and
+   **MangoWC** (`mangowm/mango`, `src/fetch/client.h`'s
+   `setclient_coordinate_center()`) -- both do the exact one-line formula
+   wasp already had in `scratchpadgeom()` (`x = usable.x + (usable.width -
+   client.width) / 2`), just with different defaults: mwc centers *every*
+   floating toplevel unconditionally, MangoWC centers by default with a
+   per-rule opt-out (`no_force_center`) plus `offsetx`/`offsety`/
+   `width`/`height` rule fields wasp didn't need for its own actual want
+   here and didn't port. **Not done**: dwl-patches'
+   `alwayscenter`/`centeredmaster`/`center-terminal`/`movecenter` and
+   Hyprland's own rule model were flagged as reference material earlier
+   but weren't actually consulted in the end -- mwc/MangoWC's C was closer
+   to hand and sufficient on their own.
 7. **Rounded border corners, and blur too.** Reference for the *feel*:
    Daniel's own **spitfire** -- `spitfire.border = { width, active,
    inactive, radius }` (see its `examples/config.lua`), border drawn *on
@@ -218,6 +202,31 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
   happen to collide), not chased further in this pass. Only the named/
   spawn-on-first-use flavor exists; no anonymous single-slot scratchpad
   (see "Up next" above for why that was skipped for now).
+- **Window rules (done, 2026-08-13)**: `wasp.rules = { { app_id=, title=,
+  tags=, floating=, monitor=, center= }, ... }` in `config.lua` -- moved
+  the old `Rule`/`static const Rule rules[]` (upstream dwl's own
+  compile-time `config.def.h` array, matched in `applyrules()`) the same
+  way `keys` moved: `Rule` itself now lives in `luaconfig.h` (shared
+  layout, same reasoning as `Arg`/`Key`), `rules`/`nrules` are runtime
+  globals `luaconfig.c`'s `load_rules()` rebuilds from `wasp.rules` on
+  every `waspconfig_load()` call, `config.def.h` only keeps an explanatory
+  comment where the static array used to be (same treatment `keys[]`
+  already got). Empty rule set is a safe, supported default -- unlike
+  `keys`, nothing about a missing/empty `wasp.rules` can lock you out, so
+  there's no emergency-fallback table to maintain here. `tags` takes a
+  1..9 workspace number (matching `wasp.keys`' own `tag` field
+  convention) rather than a raw bitmask, converted internally; a client
+  matching more than one rule gets every match's `tags` OR'd together but
+  only the *last* match's `floating`/`monitor`/`center` (same last-match-
+  wins semantics upstream dwl's `applyrules()` already had for those
+  before this change). New vs. upstream dwl: the `center` field --
+  `applyrules()` calls a new shared `centeredgeom()` helper (`dwl.c`,
+  right before `applyrules()`) after `setmon()`, at the client's own
+  requested size (`c->geom`, already populated by `mapnotify()` by the
+  time `applyrules()` runs) -- see the "Researched" note under item 6
+  above for where that formula came from. `scratchpadgeom()` (named
+  scratchpads) now calls `centeredgeom()` too instead of duplicating the
+  math, so there's exactly one centering implementation, not two.
 
 ## Reference patches to adapt (not apply as-is)
 - **hot-reload** — reference for what *not* to copy: its `dlopen`'d `.so` +

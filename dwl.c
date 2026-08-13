@@ -258,13 +258,9 @@ typedef struct {
 	struct wl_listener destroy;
 } PointerConstraint;
 
-typedef struct {
-	const char *id;
-	const char *title;
-	uint32_t tags;
-	int isfloating;
-	int monitor;
-} Rule;
+/* Rule is defined in luaconfig.h now (both dwl.c and luaconfig.c need the
+ * exact same layout -- see that header, and Arg/Key's own comment above
+ * for why this pattern is used repeatedly in this file). */
 
 typedef struct {
 	struct wlr_scene_tree *scene;
@@ -605,23 +601,40 @@ applybounds(Client *c, struct wlr_box *bbox)
 		c->geom.y = bbox->y;
 }
 
+/* wasp: centered box of the given size within m's usable area -- shared by
+ * applyrules()'s `center` rule field (below) and named scratchpads
+ * (scratchpadgeom(), see togglescratchpad()), so there's exactly one
+ * implementation of "center a window" rather than two independent ones. */
+static struct wlr_box
+centeredgeom(Monitor *m, int width, int height)
+{
+	struct wlr_box b;
+	b.width = width;
+	b.height = height;
+	b.x = m->w.x + (m->w.width - width) / 2;
+	b.y = m->w.y + (m->w.height - height) / 2;
+	return b;
+}
+
 void
 applyrules(Client *c)
 {
 	/* rule matching */
 	const char *appid, *title;
 	uint32_t newtags = 0;
-	int i;
-	const Rule *r;
+	int i, center = 0;
 	Monitor *mon = selmon, *m;
+	size_t ri;
 
 	appid = client_get_appid(c);
 	title = client_get_title(c);
 
-	for (r = rules; r < END(rules); r++) {
+	for (ri = 0; ri < nrules; ri++) {
+		const Rule *r = &rules[ri];
 		if ((!r->title || strstr(title, r->title))
 				&& (!r->id || strstr(appid, r->id))) {
 			c->isfloating = r->isfloating;
+			center = r->center;
 			newtags |= r->tags;
 			i = 0;
 			wl_list_for_each(m, &mons, link) {
@@ -633,6 +646,16 @@ applyrules(Client *c)
 
 	c->isfloating |= client_is_float_type(c);
 	setmon(c, mon, newtags);
+
+	/* Center a floating, rule-matched client at its own requested size
+	 * (c->geom is already populated by mapnotify() before applyrules()
+	 * runs) on whichever monitor it landed on -- same idea as
+	 * MangoWC/mwc default to for floating windows generally (see
+	 * NOTES.md), just opt-in here via the rule's `center` field rather
+	 * than on-by-default. No effect on a tiled client -- arrange() owns
+	 * its position, not us. */
+	if (center && c->isfloating && c->mon)
+		resize(c, centeredgeom(c->mon, c->geom.width, c->geom.height), 0);
 }
 
 void
@@ -3432,15 +3455,10 @@ scratchpad_by_name(const char *name)
 struct wlr_box
 scratchpadgeom(Monitor *m, Scratchpad *sp)
 {
-	/* Centered box, sp->w/sp->h fraction of m's usable area -- same shape
-	 * resize() elsewhere expects (layout-relative, interact=0 clips it to
-	 * m->w regardless, this is already inside it). */
-	struct wlr_box b;
-	b.width = (int)(m->w.width * sp->w);
-	b.height = (int)(m->w.height * sp->h);
-	b.x = m->w.x + (m->w.width - b.width) / 2;
-	b.y = m->w.y + (m->w.height - b.height) / 2;
-	return b;
+	/* sp->w/sp->h fraction of m's usable area, centered -- centeredgeom()
+	 * (see applyrules(), which also uses it for the `center` rule field)
+	 * does the actual centering math. */
+	return centeredgeom(m, (int)(m->w.width * sp->w), (int)(m->w.height * sp->h));
 }
 
 void

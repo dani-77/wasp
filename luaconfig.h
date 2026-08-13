@@ -110,6 +110,35 @@ typedef struct {
 extern Scratchpad *scratchpads;
 extern size_t nscratchpads;
 
+/* wasp.rules = { { app_id=, title=, tags=, floating=, monitor=, center= },
+ * ... } -- dwl's classic per-app-id/title placement rule table, moved
+ * here (out of dwl.c/config.def.h, where it used to be a `static const
+ * Rule rules[]` array) for the same reason Key/Arg live here: dwl.c's
+ * applyrules() and luaconfig.c's load_rules() both need the exact same
+ * struct layout. `app_id`/`title` are substring-matched against the
+ * client's own (NULL = matches anything); `tags` is a 1..9 workspace
+ * number (0 = don't force one, i.e. leave whatever the target monitor's
+ * own active tagset already is); `monitor` is a 0-based output index (-1
+ * = don't force one); a client matching more than one rule gets every
+ * matched rule's `tags` OR'd together, but only the *last* match's
+ * `isfloating`/`monitor`/`center` (same last-match-wins semantics
+ * upstream dwl's applyrules() already had for those two fields).
+ * `center` re-centers a floating client at its own requested size once
+ * placed (dwl.c's centeredgeom() -- the same formula wasp.scratchpad
+ * already uses to center a shown scratchpad); no effect on a tiled
+ * client. */
+typedef struct {
+	const char *id;
+	const char *title;
+	uint32_t tags;
+	int isfloating;
+	int monitor;
+	int center;
+} Rule;
+
+extern Rule *rules;
+extern size_t nrules;
+
 /* Loads (or reloads) the config, overwriting the globals above in place.
  * Safe to call again later for a hot-reload once callers redraw/rearrange
  * afterwards -- nothing here restarts the compositor, and it never

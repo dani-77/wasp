@@ -92,6 +92,23 @@ wasp.scratchpad = {
   --   app_id = "scratch-term", w = 0.6, h = 0.6 },
 }
 
+-- Window rules -- placement for specific apps, matched by app_id/title
+-- (substring match against the client's own, either field omittable).
+-- `tags` (1-9) sends it straight to a workspace; `floating` takes it out
+-- of the tiling layout; `monitor` (0-based index) forces which output it
+-- opens on; `center` re-centers a floating window at its own requested
+-- size instead of wherever it happened to want to place itself (dwl, like
+-- most dwm-family compositors, otherwise just honors whatever position
+-- the app itself asked for -- often the top-left corner, since plenty of
+-- apps don't bother asking for anything better). A client matching more
+-- than one rule gets every match's `tags` combined, but only the *last*
+-- match's `floating`/`monitor`/`center`.
+wasp.rules = {
+  -- { app_id = "org.gimp.GIMP", floating = true },
+  -- { app_id = "firefox", tags = 9 },
+  -- { app_id = "some-launcher", floating = true, center = true },
+}
+
 -- Keybindings ----------------------------------------------------------
 -- Each entry: { mods = {...}, key = "<xkb keysym name>", action = "...",
 --               <action-specific fields> }

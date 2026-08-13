@@ -44,6 +44,8 @@ const char ***autostart;
 size_t nautostart;
 Scratchpad *scratchpads;
 size_t nscratchpads;
+Rule *rules;
+size_t nrules;
 
 /* Primary modifier for config.lua keybinds that say mods = {"mod", ...} --
  * set via wasp.modkey ("alt"/"ctrl"/"super"/"shift"), defaults to Alt (what
@@ -143,6 +145,10 @@ set_defaults(void)
 	                      * their slot by name on the Client itself instead
 	                      * -- see luaconfig.h and dwl.c's togglescratchpad() */
 	nscratchpads = 0;
+	rules = NULL; /* no rules is a perfectly safe default (upstream dwl's own
+	                * behavior with an empty rules[]) -- unlike keys, nothing
+	                * here risks locking you out, so no fallback needed. */
+	nrules = 0;
 }
 
 /* ~/.config/wasp/config.lua, or $XDG_CONFIG_HOME/wasp/config.lua if set.
@@ -565,6 +571,97 @@ load_scratchpad(lua_State *L, int wasptbl)
 	}
 }
 
+/* wasp.rules = { { app_id=, title=, tags=, floating=, monitor=, center= },
+ * ... } -- see Rule in luaconfig.h. `app_id`/`title` are substring-matched
+ * against the client's own; `tags` is a 1..9 workspace number (matching
+ * wasp.keys' own `tag` field convention), converted to the bitmask
+ * dwl.c's applyrules() actually wants; `monitor` defaults to -1 ("don't
+ * force one") if omitted. Entries are as lenient as the rest of this file
+ * -- nothing here is required, an entry that sets nothing useful just
+ * never matches anything. */
+static void
+load_rules(lua_State *L, int wasptbl)
+{
+	int t, n, i;
+	Rule *buf;
+	size_t count = 0;
+
+	lua_getfield(L, wasptbl, "rules");
+	if (!lua_istable(L, -1)) {
+		lua_pop(L, 1);
+		return;
+	}
+	t = lua_gettop(L);
+	n = (int)lua_rawlen(L, t);
+	if (n <= 0) {
+		lua_pop(L, 1);
+		return;
+	}
+
+	buf = calloc((size_t)n, sizeof(Rule));
+	if (!buf) {
+		lua_pop(L, 1);
+		return;
+	}
+
+	for (i = 1; i <= n; i++) {
+		int e;
+
+		lua_rawgeti(L, t, i);
+		if (!lua_istable(L, -1)) {
+			lua_pop(L, 1);
+			continue;
+		}
+		e = lua_gettop(L);
+
+		buf[count].monitor = -1;
+
+		lua_getfield(L, e, "app_id");
+		if (lua_isstring(L, -1))
+			buf[count].id = strdup(lua_tostring(L, -1));
+		lua_pop(L, 1);
+
+		lua_getfield(L, e, "title");
+		if (lua_isstring(L, -1))
+			buf[count].title = strdup(lua_tostring(L, -1));
+		lua_pop(L, 1);
+
+		lua_getfield(L, e, "tags");
+		if (lua_isnumber(L, -1)) {
+			int tag = (int)lua_tointeger(L, -1);
+			if (tag >= 1 && tag <= 9)
+				buf[count].tags = 1u << (tag - 1);
+		}
+		lua_pop(L, 1);
+
+		lua_getfield(L, e, "floating");
+		if (lua_isboolean(L, -1))
+			buf[count].isfloating = lua_toboolean(L, -1);
+		lua_pop(L, 1);
+
+		lua_getfield(L, e, "monitor");
+		if (lua_isnumber(L, -1))
+			buf[count].monitor = (int)lua_tointeger(L, -1);
+		lua_pop(L, 1);
+
+		lua_getfield(L, e, "center");
+		if (lua_isboolean(L, -1))
+			buf[count].center = lua_toboolean(L, -1);
+		lua_pop(L, 1);
+
+		count++;
+		lua_pop(L, 1); /* entry table */
+	}
+	lua_pop(L, 1); /* rules table */
+
+	if (count > 0) {
+		rules = buf; /* leaked on reload -- see NOTES.md */
+		nrules = count;
+	} else {
+		free(buf);
+	}
+}
+
 /* Builds the Arg for one wasp.keys[i] entry, based on its action name.
  * Every action wasp_lookup_action() (dwl.c) knows about needs a case here
  * -- see the comment above dwl.c's actiontable for the full list. */
@@ -782,6 +879,7 @@ waspconfig_load(void)
 		load_keys(L, wasptbl);
 		load_autostart(L, wasptbl);
 		load_scratchpad(L, wasptbl);
+		load_rules(L, wasptbl);
 	}
 	lua_pop(L, 1); /* the wasp global (or whatever lua_getglobal pushed) */
 

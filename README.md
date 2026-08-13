@@ -62,6 +62,11 @@ working:
   h= }, ... }` — a hidden, toggleable floating window per slot, spawned
   the first time it's toggled (bound via the `toggle-scratchpad` action)
   and hidden/shown (not killed/respawned) on every toggle after that.
+- **Window rules**: `wasp.rules = { { app_id=, title=, tags=, floating=,
+  monitor=, center= }, ... }` — send specific apps to a workspace, make
+  them open floating, pin them to a monitor, or re-center them at their
+  own requested size instead of wherever they happened to want to place
+  themselves (often the top-left corner).
 
 Not done yet: mouse-drag resize variety and more border styles. The full
 running list, plus which [dwl-patches] are earmarked for which feature and
