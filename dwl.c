@@ -28,6 +28,7 @@
 #include <wlr/types/wlr_drm.h>
 #include <wlr/types/wlr_export_dmabuf_v1.h>
 #include <wlr/types/wlr_ext_data_control_v1.h>
+#include <wlr/types/wlr_ext_workspace_v1.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
 #include <wlr/types/wlr_gamma_control_v1.h>
 #include <wlr/types/wlr_idle_inhibit_v1.h>
@@ -73,6 +74,7 @@
 #include <xcb/xcb_icccm.h>
 #endif
 
+#include "xdg-shell-protocol.h"
 #include "util.h"
 #include "drwl.h"
 #include "luaconfig.h"
@@ -241,6 +243,16 @@ struct Monitor {
 	Drwl *drw;
 	Buffer *pool[2];
 	int lrpad;
+	/* wasp: ext-workspace-v1 -- exposes this monitor's tags as Wayland
+	 * workspaces for external shells that know the protocol (Utumno,
+	 * quickshell-d77, helium-d77, fabric-d77 -- none of them show any
+	 * workspace list at all against dwl/wasp without this). One group
+	 * per monitor (tags are genuinely per-monitor in dwl, not global --
+	 * see VISIBLEON()), LENGTH(tags) workspace handles inside it,
+	 * ecalloc'd in createmon(), freed in cleanupmon(). NULL if
+	 * ext_workspace_mgr itself failed to create (see setup()). */
+	struct wlr_ext_workspace_group_handle_v1 *ext_group;
+	struct wlr_ext_workspace_handle_v1 **ext_workspaces;
 };
 
 typedef struct {
@@ -257,6 +269,15 @@ typedef struct {
 	struct wlr_pointer_constraint_v1 *constraint;
 	struct wl_listener destroy;
 } PointerConstraint;
+
+/* wasp: stashed in a struct wlr_ext_workspace_handle_v1's own `data` field
+ * (see createmon()) so extworkspacecommit() can recover which Monitor and
+ * which 0-based tag index an ACTIVATE/DEACTIVATE request's handle means --
+ * the reverse direction of m->ext_workspaces[tag]. */
+typedef struct {
+	Monitor *mon;
+	unsigned int tag;
+} ExtWorkspaceTag;
 
 /* Rule is defined in luaconfig.h now (both dwl.c and luaconfig.c need the
  * exact same layout -- see that header, and Arg/Key's own comment above
@@ -325,6 +346,7 @@ static Monitor *dirtomon(enum wlr_direction dir);
 static void dwindle(Monitor *m);
 static void drawbar(Monitor *m);
 static void drawbars(void);
+static void extworkspacecommit(struct wl_listener *listener, void *data);
 static void focusclient(Client *c, int lift);
 static void focusmon(const Arg *arg);
 static void focusstack(const Arg *arg);
@@ -393,6 +415,7 @@ static void unmaplayersurfacenotify(struct wl_listener *listener, void *data);
 static void unmapnotify(struct wl_listener *listener, void *data);
 static void updatemons(struct wl_listener *listener, void *data);
 static void updatebar(Monitor *m);
+static void updateextworkspaces(Monitor *m);
 static void updatetitle(struct wl_listener *listener, void *data);
 static void urgent(struct wl_listener *listener, void *data);
 static void view(const Arg *arg);
@@ -443,6 +466,7 @@ static struct wlr_virtual_keyboard_manager_v1 *virtual_keyboard_mgr;
 static struct wlr_virtual_pointer_manager_v1 *virtual_pointer_mgr;
 static struct wlr_cursor_shape_manager_v1 *cursor_shape_mgr;
 static struct wlr_output_power_manager_v1 *power_mgr;
+static struct wlr_ext_workspace_manager_v1 *ext_workspace_mgr; /* wasp: see createmon()/updateextworkspaces() */
 
 static struct wlr_pointer_constraints_v1 *pointer_constraints;
 static struct wlr_relative_pointer_manager_v1 *relative_pointer_mgr;
@@ -497,6 +521,7 @@ static struct wl_listener new_layer_surface = {.notify = createlayersurface};
 static struct wl_listener output_mgr_apply = {.notify = outputmgrapply};
 static struct wl_listener output_mgr_test = {.notify = outputmgrtest};
 static struct wl_listener output_power_mgr_set_mode = {.notify = powermgrsetmode};
+static struct wl_listener ext_workspace_commit = {.notify = extworkspacecommit};
 static struct wl_listener request_activate = {.notify = urgent};
 static struct wl_listener request_cursor = {.notify = setcursor};
 static struct wl_listener request_set_psel = {.notify = setpsel};
@@ -1066,6 +1091,17 @@ cleanupmon(struct wl_listener *listener, void *data)
 	closemon(m);
 	wlr_scene_node_destroy(&m->fullscreen_bg->node);
 	wlr_scene_node_destroy(&m->scene_buffer->node);
+
+	if (m->ext_workspaces) {
+		for (i = 0; i < LENGTH(tags); i++) {
+			free(m->ext_workspaces[i]->data); /* the ExtWorkspaceTag */
+			wlr_ext_workspace_handle_v1_destroy(m->ext_workspaces[i]);
+		}
+		free(m->ext_workspaces);
+	}
+	if (m->ext_group)
+		wlr_ext_workspace_group_handle_v1_destroy(m->ext_group);
+
 	free(m);
 }
 
@@ -1092,6 +1128,8 @@ cleanuplisteners(void)
 	wl_list_remove(&output_mgr_apply.link);
 	wl_list_remove(&output_mgr_test.link);
 	wl_list_remove(&output_power_mgr_set_mode.link);
+	if (ext_workspace_mgr)
+		wl_list_remove(&ext_workspace_commit.link);
 	wl_list_remove(&request_activate.link);
 	wl_list_remove(&request_cursor.link);
 	wl_list_remove(&request_set_psel.link);
@@ -1412,6 +1450,34 @@ createmon(struct wl_listener *listener, void *data)
 	m->scene_buffer = wlr_scene_buffer_create(layers[LyrBottom], NULL);
 	m->scene_buffer->point_accepts_input = baracceptsinput;
 	updatebar(m);
+
+	/* wasp: ext-workspace-v1 -- one group for this monitor, one workspace
+	 * handle per tag inside it. Each handle's own `data` is an
+	 * ExtWorkspaceTag (mon, tag) so extworkspacecommit() can recover
+	 * both ends of an ACTIVATE/DEACTIVATE request; freed alongside the
+	 * handle in cleanupmon(). Initial active/urgent state comes for free
+	 * from the drawbars() call right below, which now also calls
+	 * updateextworkspaces() for every monitor. */
+	if (ext_workspace_mgr) {
+		m->ext_group = wlr_ext_workspace_group_handle_v1_create(ext_workspace_mgr, 0);
+		wlr_ext_workspace_group_handle_v1_output_enter(m->ext_group, wlr_output);
+		m->ext_workspaces = ecalloc(LENGTH(tags), sizeof(*m->ext_workspaces));
+		for (i = 0; i < LENGTH(tags); i++) {
+			ExtWorkspaceTag *wt = ecalloc(1, sizeof(*wt));
+			char id[64];
+
+			wt->mon = m;
+			wt->tag = (unsigned int)i;
+			snprintf(id, sizeof(id), "%s-%zu", wlr_output->name, i + 1);
+
+			m->ext_workspaces[i] = wlr_ext_workspace_handle_v1_create(ext_workspace_mgr, id,
+					EXT_WORKSPACE_HANDLE_V1_WORKSPACE_CAPABILITIES_ACTIVATE |
+					EXT_WORKSPACE_HANDLE_V1_WORKSPACE_CAPABILITIES_DEACTIVATE);
+			m->ext_workspaces[i]->data = wt;
+			wlr_ext_workspace_handle_v1_set_group(m->ext_workspaces[i], m->ext_group);
+			wlr_ext_workspace_handle_v1_set_name(m->ext_workspaces[i], tags[i]);
+		}
+	}
 
 	wl_list_insert(&mons, &m->link);
 	drawbars();
@@ -1845,8 +1911,78 @@ drawbars(void)
 {
 	Monitor *m = NULL;
 
-	wl_list_for_each(m, &mons, link)
+	wl_list_for_each(m, &mons, link) {
+		updateextworkspaces(m);
 		drawbar(m);
+	}
+}
+
+/* wasp: keeps ext-workspace-v1 state in sync with this monitor's tags --
+ * active mirrors m->tagset[m->seltags], urgent mirrors whether any client
+ * currently on that tag (and this monitor) has isurgent set. Called from
+ * drawbars() above, which already runs at every "something about tags/
+ * clients changed" point in this file -- independent of whether the
+ * built-in bar itself is enabled, unlike drawbar()'s own occ/urg
+ * computation (skipped outright when the bar's scene buffer is
+ * disabled). */
+void
+updateextworkspaces(Monitor *m)
+{
+	Client *c;
+	uint32_t j, urg = 0;
+
+	if (!m->ext_workspaces)
+		return;
+
+	wl_list_for_each(c, &clients, link) {
+		if (c->mon == m && c->isurgent)
+			urg |= c->tags;
+	}
+
+	for (j = 0; j < LENGTH(tags); j++) {
+		wlr_ext_workspace_handle_v1_set_active(m->ext_workspaces[j],
+				(m->tagset[m->seltags] & (1u << j)) != 0);
+		wlr_ext_workspace_handle_v1_set_urgent(m->ext_workspaces[j],
+				(urg & (1u << j)) != 0);
+	}
+}
+
+/* wasp: handles ACTIVATE/DEACTIVATE requests from ext-workspace-v1 clients
+ * (a bar's workspace pill clicked, etc.) -- reuses view()/toggleview()
+ * verbatim rather than duplicating their logic, via the exact same
+ * "selmon = <target monitor>, then call the ordinary selmon-relative
+ * action" pattern buttonpress() already uses for clicks landing on a
+ * monitor that isn't the currently focused one (see its own
+ * `selmon = xytomon(...)` before dispatching a Button's action). wasp's 9
+ * tags are fixed (see createmon()) so CREATE_WORKSPACE/ASSIGN/REMOVE are
+ * never offered as capabilities and are ignored here if a client sends
+ * one anyway. */
+void
+extworkspacecommit(struct wl_listener *listener, void *data)
+{
+	struct wlr_ext_workspace_v1_commit_event *event = data;
+	struct wlr_ext_workspace_v1_request *req;
+	struct wlr_ext_workspace_handle_v1 *ws;
+	ExtWorkspaceTag *wt;
+
+	wl_list_for_each(req, event->requests, link) {
+		switch (req->type) {
+		case WLR_EXT_WORKSPACE_V1_REQUEST_ACTIVATE:
+			if (!(ws = req->activate.workspace) || !(wt = ws->data))
+				break;
+			selmon = wt->mon;
+			view(&(Arg){ .ui = 1u << wt->tag });
+			break;
+		case WLR_EXT_WORKSPACE_V1_REQUEST_DEACTIVATE:
+			if (!(ws = req->deactivate.workspace) || !(wt = ws->data))
+				break;
+			selmon = wt->mon;
+			toggleview(&(Arg){ .ui = 1u << wt->tag });
+			break;
+		default:
+			break;
+		}
+	}
 }
 
 void
@@ -3107,6 +3243,11 @@ setup(void)
 	power_mgr = wlr_output_power_manager_v1_create(dpy);
 	wl_signal_add(&power_mgr->events.set_mode, &output_power_mgr_set_mode);
 
+	/* wasp: ext-workspace-v1 -- see the Monitor struct's own comment and
+	 * createmon()/updateextworkspaces()/extworkspacecommit(). */
+	if ((ext_workspace_mgr = wlr_ext_workspace_manager_v1_create(dpy, 1)))
+		wl_signal_add(&ext_workspace_mgr->events.commit, &ext_workspace_commit);
+
 	/* Creates an output layout, which is a wlroots utility for working with an
 	 * arrangement of screens in a physical layout. */
 	output_layout = wlr_output_layout_create(dpy);
@@ -4003,9 +4144,7 @@ xwaylandready(struct wl_listener *listener, void *data)
 
 	/* Set the default XWayland cursor to match the rest of dwl. */
 	if ((xcursor = wlr_xcursor_manager_get_xcursor(cursor_mgr, "default", 1)))
-		wlr_xwayland_set_cursor(xwayland,
-				xcursor->images[0]->buffer, xcursor->images[0]->width * 4,
-				xcursor->images[0]->width, xcursor->images[0]->height,
+		wlr_xwayland_set_cursor(xwayland, wlr_xcursor_image_get_buffer(xcursor->images[0]),
 				xcursor->images[0]->hotspot_x, xcursor->images[0]->hotspot_y);
 }
 #endif

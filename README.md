@@ -8,13 +8,13 @@
 
 **wasp** is a fork of [dwl] (dwm for Wayland) aiming for one thing dwl
 deliberately doesn't do: a config you can change without recompiling.
-Everything lives in `~/.config/wasp/config.lua`, and (once reload lands —
-see Status below) reloading it takes a save and a keypress, not a rebuild.
-Beyond that, wasp keeps dwl's own goals — small, hackable, few dependencies,
-suckless in spirit — and pulls in a handful of [dwl-patches] adapted to fit
-this model rather than `config.h` + recompile.
+Everything lives in `~/.config/wasp/config.lua`, and reloading it takes a
+save and a keypress, not a rebuild — see Hot-reload below. Beyond that,
+wasp keeps dwl's own goals — small, hackable, few dependencies, suckless
+in spirit — and pulls in a handful of [dwl-patches] adapted to fit this
+model rather than `config.h` + recompile.
 
-## Status (2026-08-12)
+## Status (2026-08-13)
 
 Most of the day-to-day compositor is Lua-driven now. What's actually
 working:
@@ -67,6 +67,12 @@ working:
   them open floating, pin them to a monitor, or re-center them at their
   own requested size instead of wherever they happened to want to place
   themselves (often the top-left corner).
+- **Workspaces exposed over `ext-workspace-v1`**: one workspace group per
+  monitor, one workspace per tag inside it — so any bar/shell that speaks
+  the protocol (not a dwl/wasp-specific thing to build against) sees and
+  can switch tags, something dwl had no story for at all before this.
+  Verified end-to-end with a standalone protocol client, not just by
+  inspection.
 
 Not done yet: mouse-drag resize variety and more border styles. The full
 running list, plus which [dwl-patches] are earmarked for which feature and
@@ -77,13 +83,15 @@ plans, not this README.
 
 Same dependencies as upstream dwl, plus Lua 5.4:
 
-- libinput, wayland, wlroots (libinput backend), xkbcommon
+- libinput, wayland, **wlroots 0.20** (libinput backend), xkbcommon
 - wayland-protocols, pkg-config (compile-time only)
 - fcft, pixman, tllist (for the bar)
 - **lua5.4** (development headers — e.g. `lua54-devel` on Void Linux)
+- libxcb, libxcb-wm (XWayland — see below)
 
-XWayland needs libxcb, libxcb-wm, and a wlroots built with X11 support;
-enable it by uncommenting the relevant lines in `config.mk`.
+XWayland is built by default (needs a wlroots built with X11 support,
+which is the common case); disable it by commenting out the relevant
+lines in `config.mk` if you'd rather not pull in libxcb at all.
 
 ```sh
 make
@@ -109,10 +117,10 @@ cp /usr/local/share/wasp/config.lua ~/.config/wasp/config.lua
 ```
 
 `examples/config.lua` is both the default and the reference: appearance,
-gaps, keyboard, terminal/menu, and a full suggested keymap (with a comment
-block explaining every action and its fields). It'll keep growing as more
-of `config.h` moves over to Lua — see [`NOTES.md`](NOTES.md) for what's
-coming.
+gaps, keyboard, terminal/menu, autostart, named scratchpads, window
+rules, and a full suggested keymap (with a comment block explaining every
+action and its fields). It'll keep growing as more of `config.h` moves
+over to Lua — see [`NOTES.md`](NOTES.md) for what's coming.
 
 For the bar's right-side status text, pipe something into wasp's `stdin`
 (it has no built-in widgets of its own, same as upstream dwl) —

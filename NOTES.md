@@ -57,25 +57,29 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
    fields: mfact, nmaster, scale, layout, rotate/reflect, x/y) rather than
    a single global scale -- scope that properly when picked up, don't
    just bolt on a lone global number.
-5. **Expose wasp's workspaces to external shells (Utumno,
-   quickshell-d77, helium-d77, fabric-d77).** All four are Daniel's own
-   Quickshell/Fabric/Rust desktop-shell projects (`~/Projectos/{utumno,
-   quickshell-d77,helium-d77,fabric-d77}`) -- bars/launchers/etc. that
-   currently target niri/Hyprland/sway, none of them wasp/dwl yet. Without
-   something exposing workspace state, their bars just won't show any
-   workspace list at all when run against wasp. dwl's own model is tags
-   (dwm-style bitmask, several active at once, per-window multi-tag) which
-   doesn't map 1:1 onto niri-style single-active workspaces -- needs actual
-   design thought, not just a mechanical port. Best bet is almost
-   certainly the standardized **`ext-workspace-v1`** Wayland protocol
-   (what niri implements, and what spitfire's own bar comment already
-   flagged: "Advertised over ext-workspace-v1, so any bar that knows that
-   protocol sees them too") rather than bespoke per-shell integration --
-   one protocol implementation in wasp should cover all four clients (and
-   any other ext-workspace-v1-aware bar) at once, versus Hyprland's
-   approach (its own custom IPC socket, not a standard protocol, not
-   worth mimicking). dwl has no `ext-workspace-v1` support today at all;
-   this is new server-side protocol work, not a patch to adapt.
+5. ~~**Expose wasp's workspaces to external shells (Utumno,
+   quickshell-d77, helium-d77, fabric-d77).**~~ **Done (2026-08-13)** --
+   `ext-workspace-v1`, see "Core" below for the implementation.
+   **Prerequisite that turned out to be needed first: bumped wlroots
+   0.19 -> 0.20.** Confirmed via `/usr/include/wlroots-0.19` that the
+   `wlr_ext_workspace_v1` helper simply doesn't exist there -- it's
+   0.20+ only. Low-risk in practice: upstream dwl's own `main` (the
+   mirror kept in this repo) already made this exact jump in commit
+   `2c9cb2a`, an 11-line diff (`config.mk`'s two `wlroots-0.19` ->
+   `wlroots-0.20`, plus an XWayland cursor-buffer API change) --
+   `wlroots0.20-devel` was already packaged in Void's repos too, so
+   nothing exotic to install. One further wrinkle past that commit:
+   this machine's actual wlroots (0.20.2) had *already* simplified
+   `wlr_xwayland_set_cursor()` further than upstream's commit assumed
+   (dropped the stride/width/height args entirely, not just the
+   buffer-getter change) -- fixed against the real installed header,
+   not the older commit's exact snippet. Confirmed via `nm`/`.pc` that
+   the packaged wlroots0.20 was itself built `have_xwayland=true`.
+   **Also enabled XWayland while at it** (Daniel's call, unprompted by
+   this item specifically -- "caso contrário não há feh nem steam para
+   ninguém") -- `config.mk`'s `XWAYLAND`/`XLIBS` were commented out
+   (dwl's own upstream default); libxcb-devel/xcb-util-wm-devel were
+   already installed on this machine so it was just uncommenting.
 6. ~~**Window rules, `wasp.rules` in config.lua.**~~ **Done (2026-08-13)**
    -- see "Core" below for the implementation. Research trail kept: the
    `center` field's design came directly from reading **mwc**
@@ -227,6 +231,61 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
   above for where that formula came from. `scratchpadgeom()` (named
   scratchpads) now calls `centeredgeom()` too instead of duplicating the
   math, so there's exactly one centering implementation, not two.
+- **Workspaces over `ext-workspace-v1` (done, 2026-08-13)**: needs
+  wlroots 0.20's `wlr_ext_workspace_v1` helper -- see item 5 above for
+  the version-bump story. One `wlr_ext_workspace_group_handle_v1` per
+  `Monitor` (tags are genuinely per-monitor in dwl, not global -- a
+  client's `tags` bitmask only means anything relative to `c->mon`'s own
+  `tagset`, see `VISIBLEON()`), `LENGTH(tags)` (9) workspace handles
+  inside each group, all created in `createmon()` right before its
+  existing `drawbars()` call (so the first `updateextworkspaces()` --
+  see below -- sets correct initial active/urgent state for free) and
+  torn down in `cleanupmon()`. Deliberately does *not* advertise the
+  `CREATE_WORKSPACE`/`ASSIGN`/`REMOVE` capabilities -- wasp's 9 tags are
+  fixed, dwl has no notion of dynamic workspaces, so only
+  `ACTIVATE`/`DEACTIVATE` are offered per workspace and `commit`-event
+  requests of the other types are ignored if a client sends one anyway.
+  Design reference: **MangoWC**'s own `src/ext-protocol/ext-workspace.h`
+  (cloned locally to read) -- confirmed its actual `create()` call shape
+  no longer matches this installed wlroots version's real header (their
+  code takes `name` as the 2nd arg + no separate `set_name()`; this
+  wlroots takes `id` as the 2nd arg and `set_name()` is its own call) --
+  written against *this machine's* actual
+  `/usr/include/wlroots-0.20/wlr/types/wlr_ext_workspace_v1.h`, not
+  copied from theirs, but the overall shape (one group per output, batch-
+  processed `commit` event with a request list, not one callback per
+  request type) carried over. Two update paths:
+  - **State out** (dwl -> client): `updateextworkspaces(Monitor *m)`,
+    called from `drawbars()` (now `updateextworkspaces(m)` +
+    `drawbar(m)` per monitor, not just `drawbar(m)`) -- deliberately
+    *not* piggybacked on `drawbar()`'s own existing `occ`/`urg`
+    computation in its `t` (tags) bar-layout case, because that whole
+    function returns immediately if the bar's scene buffer is disabled
+    (`wasp.bar.enable = false`, which is this machine's own live
+    config) and would've silently stopped updating workspace state the
+    moment the bar was turned off. `drawbars()` already ran at every
+    "something about tags/clients changed" point in the file (tag
+    switches, urgency via `urgent()`, reload, ...), so hooking it there
+    means every one of those triggers this for free, bar or no bar.
+  - **Requests in** (client -> dwl): `extworkspacecommit()`, listening
+    on `ext_workspace_mgr->events.commit`. `ACTIVATE`/`DEACTIVATE`
+    reuse `view()`/`toggleview()` verbatim rather than duplicating their
+    logic, via the same `selmon = <target>;` -then-call-the-ordinary-
+    selmon-relative-action trick `buttonpress()` already uses for a
+    click landing on a non-focused monitor's own bar (see its
+    `selmon = xytomon(...)` before dispatching a `Button`).
+  Which `(Monitor*, tag index)` a `wlr_ext_workspace_handle_v1*` means
+  is recovered via a small heap-allocated `ExtWorkspaceTag` stashed in
+  the handle's own `data` field at creation (freed alongside the handle
+  in `cleanupmon()`) -- the reverse direction of `m->ext_workspaces[i]`.
+  **Verified end-to-end**, not just by inspection: wrote a throwaway
+  standalone Wayland client (raw `wayland-scanner`-generated bindings,
+  no wlroots) that binds `ext_workspace_manager_v1` against a nested
+  test instance and dumps every group/workspace/state event it
+  receives -- got exactly 1 group (`caps=0`), 9 workspaces named "1"..
+  "9" with `caps=3` (ACTIVATE|DEACTIVATE) each, and workspace "1"
+  correctly `state=1` (active) while the rest read `state=0`, matching
+  a freshly created monitor's default `tagset`.
 
 ## Reference patches to adapt (not apply as-is)
 - **hot-reload** — reference for what *not* to copy: its `dlopen`'d `.so` +

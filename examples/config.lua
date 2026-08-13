@@ -1,9 +1,11 @@
 -- wasp — example config, and the default until you copy it:
 --   mkdir -p ~/.config/wasp && cp examples/config.lua ~/.config/wasp/config.lua
 --
--- Appearance, terminal/menu, keybindings, keyboard, and gaps are all wired
--- up. Autostart, rules etc. land on top of this same `wasp` table later --
--- see NOTES.md for what's next.
+-- Appearance, terminal/menu, keybindings, keyboard, gaps, autostart,
+-- named scratchpads, and window rules are all wired up here -- and your
+-- workspaces show up in any ext-workspace-v1-aware bar/shell for free,
+-- no config needed for that part. See NOTES.md for what's still coming
+-- (animations, output scale, rounded corners/blur).
 
 wasp = {}
 
@@ -102,7 +104,9 @@ wasp.scratchpad = {
 -- the app itself asked for -- often the top-left corner, since plenty of
 -- apps don't bother asking for anything better). A client matching more
 -- than one rule gets every match's `tags` combined, but only the *last*
--- match's `floating`/`monitor`/`center`.
+-- match's `floating`/`monitor`/`center`. Applied once, when a window is
+-- created -- editing `wasp.rules` and reloading affects the *next* window
+-- that app opens, not ones already on screen.
 wasp.rules = {
   -- { app_id = "org.gimp.GIMP", floating = true },
   -- { app_id = "firefox", tags = 9 },
@@ -124,6 +128,7 @@ wasp.rules = {
 --   spawn-menu        (none)               run wasp.menu
 --   focusstack        dir = 1 | -1          next/prev window in stack
 --   movestack         dir = 1 | -1          swap the focused window's own position with the next/prev one
+--   zoom              (none)                swap the focused window into/out of the master area
 --   incnmaster        dir = 1 | -1          grow/shrink the master area's window count
 --   setmfact          delta = <float>       grow/shrink the master area's size (+/-)
 --   view              tag = 1..9 | "all" (omit = toggle back)   switch workspace
