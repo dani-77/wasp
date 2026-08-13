@@ -107,6 +107,16 @@ wasp.scratchpad = {
 -- match's `floating`/`monitor`/`center`. Applied once, when a window is
 -- created -- editing `wasp.rules` and reloading affects the *next* window
 -- that app opens, not ones already on screen.
+--
+-- A given app's app_id isn't always as fixed as it looks -- some GTK/GLib
+-- apps report their prgname most of the time but fall back to their raw
+-- (usually reverse-DNS) GApplication id instead if D-Bus single-instance
+-- registration fails for that particular run (e.g. no
+-- DBUS_SESSION_BUS_ADDRESS). If a rule that used to work suddenly stops
+-- matching, that's worth checking (WAYLAND_DEBUG=1 <app> 2>&1 | grep
+-- set_app_id) before assuming wasp broke -- and it's fine to list the
+-- same app twice, once per app_id it's been seen using, with identical
+-- fields.
 wasp.rules = {
   -- { app_id = "org.gimp.GIMP", floating = true },
   -- { app_id = "firefox", tags = 9 },

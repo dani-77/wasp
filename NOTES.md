@@ -231,6 +231,31 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
   above for where that formula came from. `scratchpadgeom()` (named
   scratchpads) now calls `centeredgeom()` too instead of duplicating the
   math, so there's exactly one centering implementation, not two.
+
+  **Debugged (2026-08-13): d77run's `center` rule "stopped working" --
+  not a wasp bug.** After the wlroots 0.20/XWayland changes, Daniel's
+  `d77run` rule (see live `config.lua`) stopped centering. Added
+  temporary `fprintf()`s to `applyrules()` (removed again once diagnosed
+  -- not left in the tree) and watched `client_get_appid(c)`'s actual
+  return value: it's **not stable across runs**. Sometimes `"d77run"`
+  (prgname), sometimes `"dev.d77.gmrun-rejuvenated"` (its internal
+  GApplication id) -- same binary, same machine, no wasp/wlroots change
+  in between two back-to-back test runs. Best working theory: GApplication
+  tries to register itself as a D-Bus singleton on startup, and falls
+  back to reporting its raw app id instead of prgname when that
+  registration doesn't succeed (e.g. `DBUS_SESSION_BUS_ADDRESS` unset in
+  that particular run) -- not confirmed by reading d77run's own source,
+  just consistent with every run observed. Not something wasp can or
+  should paper over -- `applyrules()`'s matching logic was never wrong,
+  the *input* it was matching against just genuinely changes. Fixed
+  pragmatically in `config.lua`, not in `dwl.c`: list the same app twice
+  in `wasp.rules`, once per app_id it's been seen reporting, identical
+  fields both times (dwl's rule matching already tolerates multiple
+  matches fine). `examples/config.lua` got a general-purpose comment
+  about this pattern (check with `WAYLAND_DEBUG=1 <app> 2>&1 | grep
+  set_app_id` if a rule that used to work stops matching, don't assume
+  wasp regressed first) rather than repeating d77run's specific two
+  values, since they're meaningless outside this machine.
 - **Workspaces over `ext-workspace-v1` (done, 2026-08-13)**: needs
   wlroots 0.20's `wlr_ext_workspace_v1` helper -- see item 5 above for
   the version-bump story. One `wlr_ext_workspace_group_handle_v1` per
