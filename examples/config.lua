@@ -1,11 +1,11 @@
 -- wasp — example config, and the default until you copy it:
 --   mkdir -p ~/.config/wasp && cp examples/config.lua ~/.config/wasp/config.lua
 --
--- Appearance, terminal/menu, keybindings, keyboard, gaps, autostart,
--- named scratchpads, and window rules are all wired up here -- and your
--- workspaces show up in any ext-workspace-v1-aware bar/shell for free,
--- no config needed for that part. See NOTES.md for what's still coming
--- (animations, output scale, rounded corners/blur).
+-- Appearance, terminal/menu, keybindings, keyboard, gaps, monitors/output
+-- scale, autostart, named scratchpads, and window rules are all wired up
+-- here -- and your workspaces show up in any ext-workspace-v1-aware bar/
+-- shell for free, no config needed for that part. See NOTES.md for what's
+-- still coming (animations, rounded corners/blur).
 
 wasp = {}
 
@@ -25,6 +25,28 @@ wasp.gaps = {
   inner = 0,
   outer = 0,
   smart = false,
+}
+
+-- Per-output rules -- mfact/nmaster/layout starting values, output scale,
+-- rotation, and layout position. `name` matched as a substring against the
+-- output's own name (as in `wlr-randr`/the log at startup); omit it (or
+-- use "" / nil) for a fallback rule that matches whatever didn't match an
+-- earlier, more specific one -- a monitor uses the *first* rule that
+-- matches, not every one that does. `transform` is one of "normal" | "90"
+-- | "180" | "270" | "flipped" | "flipped-90" | "flipped-180" |
+-- "flipped-270". `x`/`y` are layout position in pixels; -1 lets wlroots
+-- auto-place it (the common case, and the default if omitted).
+--
+-- `scale` here is applied right at startup -- set it to whatever you
+-- actually want and wasp starts already scaled, no need to press
+-- mod+shift+p every session to get back to where you left off (that's
+-- for live adjustment/experimenting, not a substitute for just setting
+-- the value you want here). It's also the one field that's live --
+-- see the "setscale" action below and the reload note near the bottom
+-- of this file for what reload() does and doesn't re-apply here.
+wasp.monitors = {
+  -- { name = "eDP-1", scale = 1.25 }, -- example: a HiDPI laptop panel
+  { mfact = 0.55, nmaster = 1, scale = 1, layout = "tile", x = -1, y = -1 },
 }
 
 -- Keyboard layout (xkbcommon RMLVO fields) and repeat speed — same table
@@ -148,6 +170,7 @@ wasp.rules = {
 --   focusmon          dir = "left" | "right"            focus other monitor
 --   tagmon            dir = "left" | "right"            move focused window to other monitor
 --   setlayout         layout = "tile"|"floating"|"monocle"|"dwindle" (omit to cycle)
+--   setscale          delta = <float>       grow/shrink the focused monitor's output scale (+/-)
 --   togglefloating    (none)
 --   togglefullscreen  (none)
 --   togglebar         (none)
@@ -240,6 +263,13 @@ bind({ "mod" },          "period", "focusmon", { dir = "right" })
 bind({ "mod", "shift" }, "less",    "tagmon",   { dir = "left" })
 bind({ "mod", "shift" }, "greater", "tagmon",   { dir = "right" })
 
+-- Live output-scale inc/dec on the focused monitor -- same Mod+Shift+P/M
+-- as spitfire, so muscle memory carries over between the two. `delta` is
+-- relative (added to the current scale, not an absolute value); clamped
+-- to a sane 0.25-4.0 range in dwl.c.
+bind({ "mod", "shift" }, "p", "setscale", { delta = 0.25 })
+bind({ "mod", "shift" }, "m", "setscale", { delta = -0.25 })
+
 -- Workspaces (tags) 1-9: switch/also-show/move-window/also-tag-window
 local tagkeys = { "1", "2", "3", "4", "5", "6", "7", "8", "9" }
 local tagshiftkeys = { "exclam", "at", "numbersign", "dollar", "percent",
@@ -259,11 +289,13 @@ bind({ "mod", "shift" }, "q", "quit")
 
 -- Hot-reload -- re-reads this file and re-applies gaps, the bar's
 -- visibility/position/colors, every window's border color, the
--- background, keyboard layout/repeat speed, and keybindings themselves,
--- all live, no restart. Border *width* on already-open windows and
--- wasp.autostart are the two things that still need a restart to pick up
--- (autostart deliberately only ever runs once, at real startup -- see
--- NOTES.md; otherwise every reload would relaunch everything in it).
+-- background, keyboard layout/repeat speed, wasp.monitors' `scale` (only
+-- that one field -- mfact/nmaster/layout/transform/x/y stay startup-time
+-- only, same as they always were), and keybindings themselves, all live,
+-- no restart. Border *width* on already-open windows and wasp.autostart
+-- are the two things that still need a restart to pick up (autostart
+-- deliberately only ever runs once, at real startup -- see NOTES.md;
+-- otherwise every reload would relaunch everything in it).
 bind({ "mod", "shift" }, "r", "reload")
 
 -- VT switching (Ctrl-Alt-Fx) and Ctrl-Alt-Backspace, same as upstream dwl

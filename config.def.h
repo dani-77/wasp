@@ -39,16 +39,16 @@ static const Layout layouts[] = {
 };
 
 /* monitors */
-/* (x=-1, y=-1) is reserved as an "autoconfigure" monitor position indicator
- * WARNING: negative values other than (-1, -1) cause problems with Xwayland clients due to
+/* monrules[] used to live here as a static compile-time array, but is
+ * Lua-driven now -- see luaconfig.h/.c and ~/.config/wasp/config.lua's
+ * wasp.monitors. set_defaults() in luaconfig.c falls back to the exact
+ * single default rule this file used to hardcode (mfact 0.55, nmaster 1,
+ * scale 1, tile layout, no rotation, autoconfigured position) if
+ * config.lua is missing/broken or doesn't set wasp.monitors, so there's
+ * always at least one usable rule. (x=-1, y=-1) is reserved as an
+ * "autoconfigure" monitor position indicator -- WARNING: negative values
+ * other than (-1, -1) cause problems with Xwayland clients due to
  * https://gitlab.freedesktop.org/xorg/xserver/-/issues/899 */
-static const MonitorRule monrules[] = {
-   /* name        mfact  nmaster scale layout       rotate/reflect                x    y
-    * example of a HiDPI laptop monitor:
-    { "eDP-1",    0.5f,  1,      2,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL,   -1,  -1 }, */
-	{ NULL,       0.55f, 1,      1,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL,   -1,  -1 },
-	/* default monitor rule: can be changed but cannot be eliminated; at least one monitor rule must exist */
-};
 
 /* keyboard -- xkb_rules (layout/variant/model/options) and repeat_rate/
  * repeat_delay used to live here, but are Lua-driven now -- see

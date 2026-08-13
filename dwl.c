@@ -255,15 +255,9 @@ struct Monitor {
 	struct wlr_ext_workspace_handle_v1 **ext_workspaces;
 };
 
-typedef struct {
-	const char *name;
-	float mfact;
-	int nmaster;
-	float scale;
-	const Layout *lt;
-	enum wl_output_transform rr;
-	int x, y;
-} MonitorRule;
+/* MonitorRule is defined in luaconfig.h now (both dwl.c and luaconfig.c
+ * need the exact same layout -- see Rule's own comment above for why
+ * this pattern keeps recurring in this file). */
 
 typedef struct {
 	struct wlr_pointer_constraint_v1 *constraint;
@@ -393,6 +387,7 @@ static void setfullscreen(Client *c, int fullscreen);
 static void setlayout(const Arg *arg);
 static void setmfact(const Arg *arg);
 static void setmon(Client *c, Monitor *m, uint32_t newtags);
+static void setscale(const Arg *arg);
 static void setpsel(struct wl_listener *listener, void *data);
 static void setsel(struct wl_listener *listener, void *data);
 static void setup(void);
@@ -565,6 +560,7 @@ static const struct { const char *name; ActionFn fn; } actiontable[] = {
 	{ "movestack",        movestack },
 	{ "incnmaster",       incnmaster },
 	{ "setmfact",         setmfact },
+	{ "setscale",         setscale },
 	{ "zoom",             zoom },
 	{ "view",             view },
 	{ "toggleview",       toggleview },
@@ -1397,8 +1393,7 @@ createmon(struct wl_listener *listener, void *data)
 	/* This event is raised by the backend when a new output (aka a display or
 	 * monitor) becomes available. */
 	struct wlr_output *wlr_output = data;
-	const MonitorRule *r;
-	size_t i;
+	size_t i, ri;
 	struct wlr_output_state state;
 	Monitor *m;
 
@@ -1414,7 +1409,8 @@ createmon(struct wl_listener *listener, void *data)
 	wlr_output_state_init(&state);
 	/* Initialize monitor state using configured rules */
 	m->tagset[0] = m->tagset[1] = 1;
-	for (r = monrules; r < END(monrules); r++) {
+	for (ri = 0; ri < nmonrules; ri++) {
+		const MonitorRule *r = &monrules[ri];
 		if (!r->name || strstr(wlr_output->name, r->name)) {
 			m->m.x = r->x;
 			m->m.y = r->y;
@@ -1424,7 +1420,7 @@ createmon(struct wl_listener *listener, void *data)
 			m->lt[1] = &layouts[LENGTH(layouts) > 1 && r->lt != &layouts[1]];
 			strncpy(m->ltsymbol, m->lt[m->sellt]->symbol, sizeof(m->ltsymbol));
 			wlr_output_state_set_scale(&state, r->scale);
-			wlr_output_state_set_transform(&state, r->rr);
+			wlr_output_state_set_transform(&state, (enum wl_output_transform)r->rr);
 			break;
 		}
 	}
@@ -2830,9 +2826,14 @@ reload(const Arg *arg)
 	 * already walks the live keys[]/nkeys globals on every keypress.
 	 * NOT yet live: border *width* on already-mapped clients (would need
 	 * a resize()/geometry recompute per client, not just a color swap) --
-	 * see NOTES.md. */
+	 * see NOTES.md. Also live: wasp.monitors' `scale` (see below), though
+	 * not the rest of a monrules[] entry -- mfact/nmaster/layout/
+	 * transform/x/y stay createmon()-time-only, same as they always
+	 * were. */
 	Monitor *m;
 	Client *c;
+	size_t ri;
+	int rescaled = 0;
 
 	waspconfig_load();
 
@@ -2861,6 +2862,29 @@ reload(const Arg *arg)
 		else
 			client_set_border_color(c, (float[])COLOR(colors[SchemeNorm][ColBorder]));
 	}
+
+	/* wasp.monitors' `scale` -- see luaconfig.h's own comment on
+	 * MonitorRule for why only this one field re-applies here. First
+	 * matching rule per monitor, same as createmon(). updatemons() once
+	 * afterward (not per-monitor) since a scale change resizes m->m/m->w
+	 * via the output_layout, and the updatebar()/arrange() loop right
+	 * below needs that already settled, not stale. */
+	wl_list_for_each(m, &mons, link) {
+		for (ri = 0; ri < nmonrules; ri++) {
+			const MonitorRule *r = &monrules[ri];
+			if (!r->name || strstr(m->wlr_output->name, r->name)) {
+				if (m->wlr_output->scale != r->scale) {
+					struct wlr_output_state state = {0};
+					wlr_output_state_set_scale(&state, r->scale);
+					wlr_output_commit_state(m->wlr_output, &state);
+					rescaled = 1;
+				}
+				break;
+			}
+		}
+	}
+	if (rescaled)
+		updatemons(NULL, NULL);
 
 	wl_list_for_each(m, &mons, link) {
 		updatebar(m);
@@ -3112,6 +3136,32 @@ setmfact(const Arg *arg)
 		return;
 	selmon->mfact = f;
 	arrange(selmon);
+}
+
+/* wasp: live output-scale inc/dec (niri/spitfire-style -- spitfire binds
+ * this same idea to Mod+Shift+P/M, see wasp.monitors below for the
+ * config-driven starting value + why reload() re-applies it but not the
+ * rest of a monrules[] entry). arg->f is a relative delta, e.g. +0.25 or
+ * -0.25 -- unlike setmfact() above there's no "absolute" spelling, scale
+ * has no natural 0..1 range to disambiguate one from the other. Clamped
+ * to a sane range; wlr_output_state_set_scale() itself doesn't validate. */
+void
+setscale(const Arg *arg)
+{
+	struct wlr_output_state state = {0};
+	float newscale;
+
+	if (!arg || !selmon)
+		return;
+	newscale = selmon->wlr_output->scale + arg->f;
+	if (newscale < 0.25f)
+		newscale = 0.25f;
+	else if (newscale > 4.0f)
+		newscale = 4.0f;
+
+	wlr_output_state_set_scale(&state, newscale);
+	wlr_output_commit_state(selmon->wlr_output, &state);
+	updatemons(NULL, NULL);
 }
 
 void

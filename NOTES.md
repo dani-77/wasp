@@ -44,19 +44,16 @@ notes before picking any of them up:
 
 Two more added 2026-08-12 (not yet ordered relative to the three above):
 
-4. **Output scale**, matching spitfire/niri/MangoWC. dwl already has the
-   raw plumbing -- `MonitorRule.scale` (per-monitor, in `monrules[]`) and
-   `Monitor.b.scale`/`wlr_output_set_scale()` already exist -- it's just
-   entirely static `config.def.h` today, not `config.lua`-driven, and
-   there's no live rescale keybind (spitfire's `Mod+Shift+P`/`M`). Spitfire's
-   `spitfire.output = { scale = 1.0 }` (see its `examples/config.lua`) is
-   the reference shape -- a starting value applied at startup, re-applied
-   live on reload, with dedicated inc/dec keybinds on top. Probably wants
-   its own `wasp.monitors`/`wasp.output`-style config section eventually
-   (name-matched per-output rules, mirroring dwl's own `monrules[]`
-   fields: mfact, nmaster, scale, layout, rotate/reflect, x/y) rather than
-   a single global scale -- scope that properly when picked up, don't
-   just bolt on a lone global number.
+4. ~~**Output scale**, matching spitfire/niri/MangoWC.~~ **Done
+   (2026-08-13)** -- see "Core" below for the implementation. Went with
+   the full `wasp.monitors`/`MonitorRule` port (mfact, nmaster, scale,
+   layout, transform, x, y) rather than a lone global scale number, per
+   this item's own earlier scoping note -- barely more work than doing
+   `scale` alone once `Rule`/`Scratchpad`/`Key` had already established
+   the "move a config.def.h struct to luaconfig.h + a `load_*()` in
+   luaconfig.c" pattern three times over. `mod+shift+p`/`m` matches
+   spitfire's own live-rescale keybind exactly, muscle memory carries
+   over between the two projects.
 5. ~~**Expose wasp's workspaces to external shells (Utumno,
    quickshell-d77, helium-d77, fabric-d77).**~~ **Done (2026-08-13)** --
    `ext-workspace-v1`, see "Core" below for the implementation.
@@ -330,6 +327,59 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
   `set_name()` in `createmon()`'s workspace-creation loop. No change
   needed in Utumno at all in the end -- the bug was entirely on wasp's
   side not providing what Utumno's own code already correctly expected.
+- **Per-output rules and live scale (done, 2026-08-13)**: `wasp.monitors
+  = { { name=, mfact=, nmaster=, scale=, layout=, transform=, x=, y= },
+  ... }` -- `MonitorRule`/`monrules[]` (upstream dwl's own compile-time
+  `config.def.h` array, matched first-wins in `createmon()`) moved the
+  same way `Rule`/`Scratchpad`/`Key` did: `MonitorRule` now lives in
+  `luaconfig.h` (`lt`/`rr` typed as `const void *`/`uint32_t` there,
+  same reasoning as `Arg.v` holding a layout pointer -- that header can't
+  see dwl.c's `Layout` type or pull in a wayland/wlroots include just for
+  one enum), `monrules`/`nmonrules` are runtime globals `luaconfig.c`'s
+  `load_monitors()` rebuilds on every `waspconfig_load()` call,
+  `config.def.h`/`config.h` only keep an explanatory comment where the
+  static array used to be. Unlike `wasp.rules`, an *empty* monitor-rule
+  set is a real footgun (a monitor with mfact=0/nmaster=0/no layout) --
+  so `set_defaults()` in `luaconfig.c` does get a one-entry emergency
+  fallback here, the exact same default `config.def.h` used to hardcode
+  (any output, mfact 0.55, nmaster 1, scale 1, tile, no rotation,
+  autoconfigured position), built via `wasp_layout_by_name("tile")`
+  rather than statically, since that's a plain lookup into dwl.c's
+  `layouts[]` with no Lua/config.lua dependency, safe to call this
+  early. First-match-wins per output (not OR-accumulated like `Rule`'s
+  `tags`) -- deliberately preserved upstream dwl's own `monrules[]`
+  semantics rather than switching to `Rule`-style accumulation, since
+  "which single set of mfact/nmaster/layout applies to this monitor"
+  doesn't have an OR-able reading the way multiple tags does.
+
+  New vs. upstream dwl: only `scale` is live. A new `setscale` action
+  (`dwl.c`, next to `setmfact()`) nudges `selmon`'s output scale by a
+  relative `delta` via the same minimal `struct wlr_output_state state =
+  {0}; wlr_output_state_set_scale(...); wlr_output_commit_state(...);
+  updatemons(NULL, NULL);` idiom `powermgrsetmode()` already used for a
+  single-field output-state change, bound to `mod+shift+p`/`m` -- the
+  exact same keys spitfire already uses for the same thing, so muscle
+  memory carries over between the two projects (spitfire's own
+  `examples/config.lua` comment for `spitfire.output` was the direct
+  source for "starting value at startup + live reload + dedicated
+  inc/dec keybind" as the shape to aim for). `reload()` re-applies
+  `scale` specifically (re-matching every already-connected monitor's
+  name against `monrules`, first match, only committing if the value
+  actually changed) but deliberately *not*
+  `mfact`/`nmaster`/`layout`/`transform`/`x`/`y` -- those stay
+  createmon()-time-only, matching how `mfact`/`nmaster` already don't
+  get reset by `reload()` today (both are meant to be freely
+  keybind-adjustable at runtime via `setmfact`/`incnmaster` without a
+  later `reload()` silently reverting the live tweak back to whatever
+  `config.lua` says; unlike `scale`, which realistically only gets
+  changed rarely/deliberately, so reapplying it on reload is far less
+  likely to surprise anyone). Verified with a nested test instance:
+  `wasp.monitors = { { scale = 1.5 } }` produced `wl_output.scale: 2`
+  over the wire (the legacy integer-only `wl_output.scale` event rounds
+  a fractional value up -- expected wlroots behavior for any fractional-
+  scale-capable compositor, not a bug -- the real `1.5` float lives in
+  `wlr_output->scale` and reaches fractional-scale-aware clients via
+  `wp-fractional-scale-v1` instead).
 
 ## Reference patches to adapt (not apply as-is)
 - **hot-reload** — reference for what *not* to copy: its `dlopen`'d `.so` +

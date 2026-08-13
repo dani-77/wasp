@@ -46,6 +46,8 @@ Scratchpad *scratchpads;
 size_t nscratchpads;
 Rule *rules;
 size_t nrules;
+MonitorRule *monrules;
+size_t nmonrules;
 
 /* Primary modifier for config.lua keybinds that say mods = {"mod", ...} --
  * set via wasp.modkey ("alt"/"ctrl"/"super"/"shift"), defaults to Alt (what
@@ -56,6 +58,14 @@ static uint32_t modkey;
 
 static const char *default_termcmd[] = { "alacritty", NULL };
 static const char *default_menucmd[] = { "wmenu-run", NULL };
+
+/* Fallback if config.lua is missing/broken or doesn't set wasp.monitors --
+ * the exact single default rule config.def.h used to hardcode (any output,
+ * mfact 0.55, nmaster 1, scale 1, tile layout, no rotation, autoconfigured
+ * position). Built in set_defaults() below, not statically, since it needs
+ * wasp_layout_by_name() (a plain lookup into dwl.c's layouts[] table, no
+ * Lua/config.lua dependency -- safe to call this early). */
+static MonitorRule default_monrules[1];
 
 /* Emergency-fallback keymap: enough to never be locked out (terminal, menu,
  * window/workspace nav, kill, quit, VT switch) if config.lua is missing,
@@ -149,6 +159,17 @@ set_defaults(void)
 	                * behavior with an empty rules[]) -- unlike keys, nothing
 	                * here risks locking you out, so no fallback needed. */
 	nrules = 0;
+	default_monrules[0] = (MonitorRule){
+		.name = NULL, .mfact = 0.55f, .nmaster = 1, .scale = 1.0f,
+		.lt = wasp_layout_by_name("tile"), .rr = 0 /* WL_OUTPUT_TRANSFORM_NORMAL */,
+		.x = -1, .y = -1,
+	};
+	monrules = default_monrules; /* a missing monitor rule, unlike keys, isn't
+	                               * a lock-out risk -- but an *empty* one would
+	                               * leave a monitor with mfact=0/nmaster=0/no
+	                               * layout, which is a real footgun, so this
+	                               * one does get an emergency fallback. */
+	nmonrules = 1;
 }
 
 /* ~/.config/wasp/config.lua, or $XDG_CONFIG_HOME/wasp/config.lua if set.
@@ -662,6 +683,129 @@ load_rules(lua_State *L, int wasptbl)
 	}
 }
 
+/* "normal"|"90"|"180"|"270"|"flipped"|"flipped-90"|"flipped-180"|
+ * "flipped-270" -> the matching WL_OUTPUT_TRANSFORM_* value (0 for
+ * anything unrecognized/omitted, same as "normal"). */
+static uint32_t
+transform_from_name(const char *name)
+{
+	if (!name)
+		return 0;
+	if (!strcmp(name, "90")) return 1;
+	if (!strcmp(name, "180")) return 2;
+	if (!strcmp(name, "270")) return 3;
+	if (!strcmp(name, "flipped")) return 4;
+	if (!strcmp(name, "flipped-90")) return 5;
+	if (!strcmp(name, "flipped-180")) return 6;
+	if (!strcmp(name, "flipped-270")) return 7;
+	return 0; /* "normal", or anything else */
+}
+
+/* wasp.monitors = { { name=, mfact=, nmaster=, scale=, layout=,
+ * transform=, x=, y= }, ... } -- see MonitorRule in luaconfig.h. `name`
+ * omitted/empty matches any output; a monitor uses the *first* matching
+ * entry, not every one that matches (see luaconfig.h's own comment on
+ * why, mirroring upstream dwl's monrules[] semantics). Omitted fields
+ * fall back to the same values config.def.h's own single default rule
+ * always used (mfact 0.55, nmaster 1, scale 1, tile layout, no rotation,
+ * autoconfigured position) so a partial entry (e.g. just `{ name =
+ * "eDP-1", scale = 2 }`) doesn't leave the rest zeroed out. */
+static void
+load_monitors(lua_State *L, int wasptbl)
+{
+	int t, n, i;
+	MonitorRule *buf;
+	size_t count = 0;
+
+	lua_getfield(L, wasptbl, "monitors");
+	if (!lua_istable(L, -1)) {
+		lua_pop(L, 1);
+		return;
+	}
+	t = lua_gettop(L);
+	n = (int)lua_rawlen(L, t);
+	if (n <= 0) {
+		lua_pop(L, 1);
+		return;
+	}
+
+	buf = calloc((size_t)n, sizeof(MonitorRule));
+	if (!buf) {
+		lua_pop(L, 1);
+		return;
+	}
+
+	for (i = 1; i <= n; i++) {
+		int e;
+
+		lua_rawgeti(L, t, i);
+		if (!lua_istable(L, -1)) {
+			lua_pop(L, 1);
+			continue;
+		}
+		e = lua_gettop(L);
+
+		buf[count] = (MonitorRule){
+			.name = NULL, .mfact = 0.55f, .nmaster = 1, .scale = 1.0f,
+			.lt = wasp_layout_by_name("tile"), .rr = 0, .x = -1, .y = -1,
+		};
+
+		lua_getfield(L, e, "name");
+		if (lua_isstring(L, -1))
+			buf[count].name = strdup(lua_tostring(L, -1));
+		lua_pop(L, 1);
+
+		lua_getfield(L, e, "mfact");
+		if (lua_isnumber(L, -1))
+			buf[count].mfact = (float)lua_tonumber(L, -1);
+		lua_pop(L, 1);
+
+		lua_getfield(L, e, "nmaster");
+		if (lua_isnumber(L, -1))
+			buf[count].nmaster = (int)lua_tointeger(L, -1);
+		lua_pop(L, 1);
+
+		lua_getfield(L, e, "scale");
+		if (lua_isnumber(L, -1))
+			buf[count].scale = (float)lua_tonumber(L, -1);
+		lua_pop(L, 1);
+
+		lua_getfield(L, e, "layout");
+		if (lua_isstring(L, -1)) {
+			const void *lt = wasp_layout_by_name(lua_tostring(L, -1));
+			if (lt)
+				buf[count].lt = lt;
+		}
+		lua_pop(L, 1);
+
+		lua_getfield(L, e, "transform");
+		if (lua_isstring(L, -1))
+			buf[count].rr = transform_from_name(lua_tostring(L, -1));
+		lua_pop(L, 1);
+
+		lua_getfield(L, e, "x");
+		if (lua_isnumber(L, -1))
+			buf[count].x = (int)lua_tointeger(L, -1);
+		lua_pop(L, 1);
+
+		lua_getfield(L, e, "y");
+		if (lua_isnumber(L, -1))
+			buf[count].y = (int)lua_tointeger(L, -1);
+		lua_pop(L, 1);
+
+		count++;
+		lua_pop(L, 1); /* entry table */
+	}
+	lua_pop(L, 1); /* monitors table */
+
+	if (count > 0) {
+		monrules = buf; /* leaked on reload -- see NOTES.md */
+		nmonrules = count;
+	} else {
+		free(buf);
+	}
+}
+
 /* Builds the Arg for one wasp.keys[i] entry, based on its action name.
  * Every action wasp_lookup_action() (dwl.c) knows about needs a case here
  * -- see the comment above dwl.c's actiontable for the full list. */
@@ -687,7 +831,7 @@ build_key_arg(lua_State *L, int e, const char *action)
 		if (lua_isnumber(L, -1))
 			arg.i = (int)lua_tointeger(L, -1);
 		lua_pop(L, 1);
-	} else if (!strcmp(action, "setmfact")) {
+	} else if (!strcmp(action, "setmfact") || !strcmp(action, "setscale")) {
 		lua_getfield(L, e, "delta");
 		if (lua_isnumber(L, -1))
 			arg.f = (float)lua_tonumber(L, -1);
@@ -880,6 +1024,7 @@ waspconfig_load(void)
 		load_autostart(L, wasptbl);
 		load_scratchpad(L, wasptbl);
 		load_rules(L, wasptbl);
+		load_monitors(L, wasptbl);
 	}
 	lua_pop(L, 1); /* the wasp global (or whatever lua_getglobal pushed) */
 

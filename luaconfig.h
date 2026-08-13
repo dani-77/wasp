@@ -139,6 +139,42 @@ typedef struct {
 extern Rule *rules;
 extern size_t nrules;
 
+/* wasp.monitors = { { name=, mfact=, nmaster=, scale=, layout=,
+ * transform=, x=, y= }, ... } -- dwl's classic per-output monitor rule
+ * table (upstream's `monrules[]`, `config.def.h`), moved here the same
+ * way Rule/Scratchpad were: dwl.c's createmon()/reload() and
+ * luaconfig.c's load_monitors() both need the exact same struct layout.
+ * `name` is a substring match against the output's own name (NULL/""
+ * matches any output); a monitor uses the *first* matching rule, not
+ * every one that matches (unlike Rule's tags, which OR-accumulate --
+ * matches upstream dwl's own monrules[] semantics, preserved here on
+ * purpose, not an oversight). `x`/`y` are layout position (-1 = let
+ * wlroots auto-place it); `lt` is `const void *` here (really `const
+ * Layout *`) for the same reason Arg.v is when it holds a layout --
+ * this header can't see dwl.c's `Layout` type at all, see
+ * wasp_layout_by_name(). `rr` is `uint32_t` here (really `enum
+ * wl_output_transform`) so this header doesn't need a wlroots/wayland
+ * include just for one enum.
+ *
+ * Only `scale` is live -- reload() re-applies it (by re-matching each
+ * already-connected monitor's name against this array) to whichever
+ * monitor(s) it applies to; `mfact`/`nmaster`/`layout`/`transform`/`x`/`y`
+ * are createmon()-time-only, same as they always were, so reload()
+ * doesn't stomp on a live `setmfact`/`incnmaster`/`setlayout` tweak the
+ * way blindly re-applying all of monrules[] every reload would. */
+typedef struct {
+	const char *name;
+	float mfact;
+	int nmaster;
+	float scale;
+	const void *lt;
+	uint32_t rr;
+	int x, y;
+} MonitorRule;
+
+extern MonitorRule *monrules;
+extern size_t nmonrules;
+
 /* Loads (or reloads) the config, overwriting the globals above in place.
  * Safe to call again later for a hot-reload once callers redraw/rearrange
  * afterwards -- nothing here restarts the compositor, and it never

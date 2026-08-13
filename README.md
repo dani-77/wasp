@@ -73,6 +73,14 @@ working:
   can switch tags, something dwl had no story for at all before this.
   Verified end-to-end with a standalone protocol client, not just by
   inspection.
+- **Per-output rules and live scale**: `wasp.monitors = { { name=,
+  mfact=, nmaster=, scale=, layout=, transform=, x=, y= }, ... }` — same
+  idea as `wasp.rules`, but for outputs instead of clients (a monitor
+  uses the first matching rule, matching upstream dwl's own `monrules[]`
+  semantics). `scale` is live — a bound key (`mod+shift+p`/`m`, same
+  convention as spitfire) nudges it up/down at runtime, and it's the one
+  field `reload` re-applies; the rest stays a startup-time setting, like
+  it always was.
 
 Not done yet: mouse-drag resize variety and more border styles. The full
 running list, plus which [dwl-patches] are earmarked for which feature and
@@ -117,10 +125,11 @@ cp /usr/local/share/wasp/config.lua ~/.config/wasp/config.lua
 ```
 
 `examples/config.lua` is both the default and the reference: appearance,
-gaps, keyboard, terminal/menu, autostart, named scratchpads, window
-rules, and a full suggested keymap (with a comment block explaining every
-action and its fields). It'll keep growing as more of `config.h` moves
-over to Lua — see [`NOTES.md`](NOTES.md) for what's coming.
+gaps, keyboard, monitors/output scale, terminal/menu, autostart, named
+scratchpads, window rules, and a full suggested keymap (with a comment
+block explaining every action and its fields). It'll keep growing as more
+of `config.h` moves over to Lua — see [`NOTES.md`](NOTES.md) for what's
+coming.
 
 For the bar's right-side status text, pipe something into wasp's `stdin`
 (it has no built-in widgets of its own, same as upstream dwl) —
