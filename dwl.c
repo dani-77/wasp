@@ -85,6 +85,15 @@
 #define LENGTH(X)               (sizeof X / sizeof X[0])
 #define END(A)                  ((A) + LENGTH(A))
 #define TAGMASK                 ((1u << LENGTH(tags)) - 1)
+/* wasp: one tag bit reserved above TAGMASK for hidden named scratchpads
+ * (wasp.scratchpad in config.lua) -- never part of any monitor's normal
+ * tagset (view()/tag()/toggletag() etc. only ever touch TAGMASK bits), so
+ * a scratchpad client with tags == SPTAG is invisible everywhere until
+ * togglescratchpad() puts it back on a real tag. Shared by every named
+ * scratchpad slot -- which slot a given client belongs to is tracked
+ * separately via its own `scratchpad` field, not via distinct tag bits
+ * per slot. See dwl.c's togglescratchpad(). */
+#define SPTAG                   (1u << LENGTH(tags))
 #define LISTEN(E, L, H)         wl_signal_add((E), ((L)->notify = (H), (L)))
 #define LISTEN_STATIC(E, H)     do { struct wl_listener *_l = ecalloc(1, sizeof(*_l)); _l->notify = (H); wl_signal_add((E), _l); } while (0)
 #define TEXTW(mon, text)        (drwl_font_getwidth(mon->drw, text) + mon->lrpad)
@@ -146,6 +155,13 @@ typedef struct {
 	uint32_t tags;
 	int isfloating, isurgent, isfullscreen;
 	uint32_t resize; /* configure serial of a pending resize */
+	/* wasp: name of the wasp.scratchpad slot this client belongs to, or
+	 * NULL for an ordinary client -- set once in mapnotify() when a
+	 * pending spawn's app_id matches (see togglescratchpad()). Kept on
+	 * the Client itself, not looked up in the `scratchpads` array, so it
+	 * survives a config reload even though that array gets rebuilt from
+	 * scratch each time. */
+	const char *scratchpad;
 } Client;
 
 /* Key is defined in luaconfig.h now too -- luaconfig.c builds keys[]
@@ -371,6 +387,9 @@ static void tile(Monitor *m);
 static void togglebar(const Arg *arg);
 static void togglefloating(const Arg *arg);
 static void togglefullscreen(const Arg *arg);
+static Scratchpad *scratchpad_by_name(const char *name);
+static struct wlr_box scratchpadgeom(Monitor *m, Scratchpad *sp);
+static void togglescratchpad(const Arg *arg);
 static void toggletag(const Arg *arg);
 static void toggleview(const Arg *arg);
 static void unlocksession(struct wl_listener *listener, void *data);
@@ -392,6 +411,14 @@ static void zoom(const Arg *arg);
 static pid_t child_pid = -1;
 static pid_t *autostart_pids; /* wasp.autostart -- see autostartexec()/cleanup()/handlesig() */
 static size_t autostart_pids_len;
+/* wasp: set by togglescratchpad() right before spawning a not-yet-running
+ * slot, cleared by mapnotify() once it claims the matching client (or left
+ * dangling if that process exits/crashes before ever mapping a surface --
+ * rare, and the worst case is the *next* differently-named scratchpad's
+ * freshly-spawned client getting mis-claimed if its app_id happens to
+ * collide, not a crash). */
+static const char *pending_scratchpad_name;
+static const char *pending_scratchpad_appid;
 static int locked;
 static void *exclusive_focus;
 static struct wl_display *dpy;
@@ -528,6 +555,7 @@ static const struct { const char *name; ActionFn fn; } actiontable[] = {
 	{ "togglefloating",   togglefloating },
 	{ "togglefullscreen", togglefullscreen },
 	{ "togglebar",        togglebar },
+	{ "toggle-scratchpad", togglescratchpad },
 	{ "killclient",       killclient },
 	{ "quit",             quit },
 	{ "chvt",             chvt },
@@ -2205,6 +2233,24 @@ mapnotify(struct wl_listener *listener, void *data)
 	} else {
 		applyrules(c);
 	}
+
+	/* wasp: claim a freshly-spawned scratchpad client (see
+	 * togglescratchpad()) and show it immediately, on top of whatever
+	 * applyrules() above just did -- one press of its keybind both spawns
+	 * and reveals it, no second press needed. */
+	if (pending_scratchpad_name && selmon
+			&& !strcmp(client_get_appid(c), pending_scratchpad_appid)) {
+		Scratchpad *sp = scratchpad_by_name(pending_scratchpad_name);
+		c->scratchpad = pending_scratchpad_name;
+		pending_scratchpad_name = NULL;
+		pending_scratchpad_appid = NULL;
+		c->mon = selmon;
+		c->tags = selmon->tagset[selmon->seltags];
+		setfloating(c, 1);
+		if (sp)
+			resize(c, scratchpadgeom(selmon, sp), 0);
+	}
+
 	drawbars();
 
 unset_fullscreen:
@@ -3367,6 +3413,90 @@ togglefullscreen(const Arg *arg)
 	Client *sel = focustop(selmon);
 	if (sel)
 		setfullscreen(sel, !sel->isfullscreen);
+}
+
+/* wasp: named scratchpads -- see Scratchpad in luaconfig.h and the
+ * `scratchpad` field/SPTAG comment on Client. */
+Scratchpad *
+scratchpad_by_name(const char *name)
+{
+	size_t i;
+	if (!name)
+		return NULL;
+	for (i = 0; i < nscratchpads; i++)
+		if (!strcmp(scratchpads[i].name, name))
+			return &scratchpads[i];
+	return NULL;
+}
+
+struct wlr_box
+scratchpadgeom(Monitor *m, Scratchpad *sp)
+{
+	/* Centered box, sp->w/sp->h fraction of m's usable area -- same shape
+	 * resize() elsewhere expects (layout-relative, interact=0 clips it to
+	 * m->w regardless, this is already inside it). */
+	struct wlr_box b;
+	b.width = (int)(m->w.width * sp->w);
+	b.height = (int)(m->w.height * sp->h);
+	b.x = m->w.x + (m->w.width - b.width) / 2;
+	b.y = m->w.y + (m->w.height - b.height) / 2;
+	return b;
+}
+
+void
+togglescratchpad(const Arg *arg)
+{
+	/* arg->v is the slot's name (a string built by luaconfig.c's
+	 * build_key_arg()) -- resolved against the live `scratchpads` array
+	 * here, at call time, rather than cached, since that array is rebuilt
+	 * from scratch on every config reload (see luaconfig.h).
+	 *
+	 * Hide/show reuses the ordinary VISIBLEON()/arrange() visibility
+	 * machinery instead of touching scene-node enable state directly: a
+	 * hidden scratchpad's tags is set to SPTAG (never part of any
+	 * monitor's normal tagset), so arrange()'s usual per-client
+	 * VISIBLEON() walk hides it for free, same as any other tag switch.
+	 *
+	 * "Currently visible right here" (VISIBLEON(found, selmon)) is the
+	 * hide/show decision, not just "does it have SPTAG" -- so toggling a
+	 * scratchpad that's floating-but-on-a-different-tag/monitor always
+	 * brings it *here* first, rather than hiding it further, matching
+	 * what a drop-down terminal is expected to do. */
+	const char *name = arg && arg->v ? (const char *)arg->v : NULL;
+	Scratchpad *sp = scratchpad_by_name(name);
+	Client *c, *found = NULL;
+
+	if (!sp || !selmon)
+		return;
+
+	wl_list_for_each(c, &clients, link) {
+		if (c->scratchpad && !strcmp(c->scratchpad, name)) {
+			found = c;
+			break;
+		}
+	}
+
+	if (!found) {
+		/* Not running yet -- spawn it, mapnotify() claims and shows the
+		 * client once it maps (matched by app_id). */
+		pending_scratchpad_name = sp->name;
+		pending_scratchpad_appid = sp->app_id;
+		spawn(&(Arg){ .v = sp->cmd });
+		return;
+	}
+
+	if (VISIBLEON(found, selmon)) {
+		found->tags = SPTAG;
+		arrange(selmon);
+		focusclient(focustop(selmon), 1);
+	} else {
+		found->mon = selmon;
+		found->tags = selmon->tagset[selmon->seltags];
+		setfloating(found, 1); /* reparents scene node + arrange(selmon) + drawbars() */
+		resize(found, scratchpadgeom(selmon, sp), 0);
+		focusclient(found, 1);
+	}
+	drawbars();
 }
 
 void

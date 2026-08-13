@@ -58,6 +58,10 @@ working:
   *width* on already-open windows and `wasp.autostart` still need one
   (autostart only ever runs once on purpose, so reload doesn't relaunch
   everything in it).
+- **Named scratchpads**: `wasp.scratchpad = { { name=, cmd=, app_id=, w=,
+  h= }, ... }` — a hidden, toggleable floating window per slot, spawned
+  the first time it's toggled (bound via the `toggle-scratchpad` action)
+  and hidden/shown (not killed/respawned) on every toggle after that.
 
 Not done yet: mouse-drag resize variety and more border styles. The full
 running list, plus which [dwl-patches] are earmarked for which feature and

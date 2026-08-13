@@ -25,14 +25,15 @@ notes before picking any of them up:
    this item may already be *done* in substance — check with Daniel
    whether anything concrete is still missing before starting more work
    here, rather than assuming a gap.
-2. **Scratchpad.** Reference: spitfire already has this working twice --
-   a single anonymous slot (`spitfire.window.toggle_scratchpad()`) and a
-   named/spawn-on-first-use one keyed by `app_id`
-   (`spitfire.scratchpad.toggle(name, spawncmd, app_id, w_frac, h_frac)`),
-   see `~/Projectos/spitfire/examples/config.lua`. dwl-patches has
-   `namedscratchpads` and `simple_scratchpad` as reference material for
-   the C side (window hide/show via `wlr_scene_node_set_enabled` +
-   tag/floating juggling, not full unmap/remap).
+2. ~~**Scratchpad.**~~ **Done (2026-08-13)** -- see "Core" below for the
+   implementation, and [[wasp-project]] memory for the summary. Only the
+   named/spawn-on-first-use flavor, matching spitfire's
+   `spitfire.scratchpad.toggle(name, spawncmd, app_id, w_frac, h_frac)`
+   (see `~/Projectos/spitfire/examples/config.lua`) -- spitfire's *other*
+   flavor, a single anonymous slot
+   (`spitfire.window.toggle_scratchpad()`), wasn't ported; not clearly
+   more useful than just adding a second named slot, revisit only if it
+   turns out to actually be missed.
 3. **Animations, MangoWC-style.** MangoWC (`mangowm/mango`) is the
    confirmed real dwl fork precedent for this (see project memory) --
    need to actually read its source for how it drives open/close/move/
@@ -185,6 +186,38 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
   see that file's action-reference comment for the full list of actions
   and fields. `dwl.c`'s `buttons[]` (mouse bindings) is still the old
   static `config.h` array, not Lua-driven yet — worth revisiting.
+- **Named scratchpads (done, 2026-08-13)**: `wasp.scratchpad = { { name=,
+  cmd=, app_id=, w=, h= }, ... }` in `config.lua`, toggled via the
+  `toggle-scratchpad` action (arg: `name`). Design, deliberately not a
+  straight port of dwl-patches' `namedscratchpads`/`simple_scratchpad`
+  (which hide via `wlr_scene_node_set_enabled` directly): reuses dwl's
+  existing `VISIBLEON()`/`arrange()` tag-visibility machinery instead —
+  hiding a scratchpad just sets its `tags` to `SPTAG` (one dedicated bit
+  above `TAGMASK`, shared by every named slot, never part of any
+  monitor's normal tagset), so the usual per-client visibility walk in
+  `arrange()` hides it for free, same code path as any other tag switch.
+  Showing it sets `tags` back to the current monitor's active tagset,
+  floating, centered/sized per `w`/`h` (fraction of the monitor's usable
+  area). `togglescratchpad()`'s hide/show decision is
+  `VISIBLEON(client, selmon)` (not just "does it have SPTAG"), so
+  toggling a scratchpad that's floating on a different tag/monitor always
+  brings it to the current one rather than hiding it further — matches
+  drop-down-terminal expectations. Which live `Client` (if any) belongs
+  to a slot is tracked via a `scratchpad` field (the slot's name) added
+  to `Client` itself, not inside the `Scratchpad` config array — that
+  array is rebuilt from scratch on every `waspconfig_load()` call (same
+  as `keys`/`autostart`), so anything caching state *inside* it wouldn't
+  survive a hot-reload; the `Client` field does, so a reload never
+  orphans an already-spawned scratchpad. Known gap, same shape as the
+  `autostart` one already documented above: if the spawned process exits
+  before ever mapping a surface, dwl.c's "pending spawn" bookkeeping
+  (`pending_scratchpad_name`/`pending_scratchpad_appid`, cleared once
+  claimed) is left dangling until the *next* toggle of any slot
+  overwrites it — harmless in practice (worst case, a later differently
+  named slot's freshly-spawned client gets mis-claimed if `app_id`s
+  happen to collide), not chased further in this pass. Only the named/
+  spawn-on-first-use flavor exists; no anonymous single-slot scratchpad
+  (see "Up next" above for why that was skipped for now).
 
 ## Reference patches to adapt (not apply as-is)
 - **hot-reload** — reference for what *not* to copy: its `dlopen`'d `.so` +

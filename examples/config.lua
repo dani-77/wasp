@@ -65,6 +65,33 @@ wasp.autostart = {
   -- { "mako" }, -- notifications
 }
 
+-- Named scratchpads -- a hidden, toggleable floating window per slot.
+-- Toggling a slot with nothing running yet spawns `cmd`; toggling it again
+-- (from anywhere) hides/shows the same window rather than killing and
+-- respawning it. `app_id` is what wasp matches the freshly-spawned window
+-- against to claim it as this slot's (defaults to `name` -- set it
+-- explicitly if `cmd` doesn't already open with a matching --class/
+-- --app-id). `w`/`h` are the fraction of the monitor's usable area it's
+-- centered and sized to when shown (default 0.6 each). Bound via the
+-- "toggle-scratchpad" action below, name = <slot's name>.
+--
+-- A scratchpad terminal needs its own app_id, distinct from an ordinary
+-- one, so wasp can tell them apart -- terminal_with() below builds that
+-- on top of wasp.terminal (whatever it's set to above) instead of
+-- hardcoding a terminal here too. Assumes a --class-style flag
+-- (alacritty/kitty/wezterm); foot uses -a instead -- swap if that's yours.
+local function terminal_with(...)
+  local argv = {}
+  for i, a in ipairs(wasp.terminal) do argv[i] = a end
+  for _, a in ipairs({ ... }) do argv[#argv + 1] = a end
+  return argv
+end
+
+wasp.scratchpad = {
+  -- { name = "term", cmd = terminal_with("--class", "scratch-term"),
+  --   app_id = "scratch-term", w = 0.6, h = 0.6 },
+}
+
 -- Keybindings ----------------------------------------------------------
 -- Each entry: { mods = {...}, key = "<xkb keysym name>", action = "...",
 --               <action-specific fields> }
@@ -97,6 +124,7 @@ wasp.autostart = {
 --   chvt              vt = <number>         switch to a different virtual terminal
 --   moveresizekb      dx = dy = dw = dh = <pixels>   nudge/resize the focused floating window
 --   reload            (none)                re-read config.lua live -- see the note above wasp.autostart below for what this does/doesn't cover
+--   toggle-scratchpad name = "<slot name>"   spawn/show/hide a wasp.scratchpad slot -- see above
 wasp.keys = {}
 local keys = wasp.keys
 
@@ -137,6 +165,10 @@ bind({ "mod" }, "Return", "zoom")  -- swap focused window into/out of master
 -- focus goes, like focusstack above) with the next/previous one.
 bind({ "mod", "shift" }, "j", "movestack", { dir = 1 })
 bind({ "mod", "shift" }, "k", "movestack", { dir = -1 })
+
+-- Scratchpad -- pairs with the wasp.scratchpad slot above; uncomment both
+-- together. Backtick/grave is the common drop-down-terminal convention.
+-- bind({ "mod" }, "grave", "toggle-scratchpad", { name = "term" })
 
 -- Resize
 bind({ "mod" }, "i", "incnmaster", { dir = 1 })

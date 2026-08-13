@@ -83,6 +83,33 @@ extern size_t nkeys;
 extern const char ***autostart;
 extern size_t nautostart;
 
+/* wasp.scratchpad = { { name=, cmd={...}, app_id=, w=, h= }, ... } -- named
+ * scratchpad slots, toggled by the "toggle-scratchpad" action (its arg is
+ * the slot's `name`). `cmd` is spawned (dwl.c's spawn(), fork+execvp, same
+ * as termcmd/menucmd) the first time a slot is toggled with nothing
+ * running yet; `app_id` is what dwl.c's mapnotify() matches against
+ * client_get_appid() to claim the freshly-spawned client for this slot
+ * (defaults to `name` itself if omitted -- the common case is spawning
+ * with a matching --app-id/--class). `w`/`h` are the fraction (0, 1] of
+ * the monitor's usable area the client is centered and sized to when
+ * shown; default 0.6 each if omitted or out of range.
+ *
+ * This struct is *config data only* -- which live Client, if any, belongs
+ * to a given slot is tracked on the Client itself (dwl.c's `scratchpad`
+ * field, the slot's name) rather than here, because `scratchpads` is
+ * rebuilt from scratch on every waspconfig_load() call (same as `keys`)
+ * and would otherwise lose track of an already-spawned client across a
+ * hot-reload. See dwl.c's togglescratchpad(). */
+typedef struct {
+	const char *name;
+	const char **cmd;
+	const char *app_id;
+	float w, h;
+} Scratchpad;
+
+extern Scratchpad *scratchpads;
+extern size_t nscratchpads;
+
 /* Loads (or reloads) the config, overwriting the globals above in place.
  * Safe to call again later for a hot-reload once callers redraw/rearrange
  * afterwards -- nothing here restarts the compositor, and it never

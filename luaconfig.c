@@ -42,6 +42,8 @@ unsigned int gapsouter;
 int gapsmart;
 const char ***autostart;
 size_t nautostart;
+Scratchpad *scratchpads;
+size_t nscratchpads;
 
 /* Primary modifier for config.lua keybinds that say mods = {"mod", ...} --
  * set via wasp.modkey ("alt"/"ctrl"/"super"/"shift"), defaults to Alt (what
@@ -136,6 +138,11 @@ set_defaults(void)
 	autostart = NULL; /* re-parsed data only -- doesn't touch already-spawned
 	                    * processes, see autostartexec()/reload() in dwl.c */
 	nautostart = 0;
+	scratchpads = NULL; /* re-parsed data only -- doesn't touch already-
+	                      * spawned/shown scratchpad clients, which track
+	                      * their slot by name on the Client itself instead
+	                      * -- see luaconfig.h and dwl.c's togglescratchpad() */
+	nscratchpads = 0;
 }
 
 /* ~/.config/wasp/config.lua, or $XDG_CONFIG_HOME/wasp/config.lua if set.
@@ -469,6 +476,95 @@ load_autostart(lua_State *L, int wasptbl)
 	lua_pop(L, 1); /* autostart table */
 }
 
+/* wasp.scratchpad = { { name=, cmd={...}, app_id=, w=, h= }, ... } -- see
+ * Scratchpad in luaconfig.h. Entries missing `name` or `cmd` (both
+ * required) are skipped rather than aborting the whole list, same
+ * leniency as load_keys()/load_autostart(). */
+static void
+load_scratchpad(lua_State *L, int wasptbl)
+{
+	int t, n, i;
+	Scratchpad *buf;
+	size_t count = 0;
+
+	lua_getfield(L, wasptbl, "scratchpad");
+	if (!lua_istable(L, -1)) {
+		lua_pop(L, 1);
+		return;
+	}
+	t = lua_gettop(L);
+	n = (int)lua_rawlen(L, t);
+	if (n <= 0) {
+		lua_pop(L, 1);
+		return;
+	}
+
+	buf = calloc((size_t)n, sizeof(Scratchpad));
+	if (!buf) {
+		lua_pop(L, 1);
+		return;
+	}
+
+	for (i = 1; i <= n; i++) {
+		int e;
+		const char *name = NULL;
+		const char **cmd = NULL;
+		float w = 0.6f, h = 0.6f;
+
+		lua_rawgeti(L, t, i);
+		if (!lua_istable(L, -1)) {
+			lua_pop(L, 1);
+			continue;
+		}
+		e = lua_gettop(L);
+
+		lua_getfield(L, e, "name");
+		if (lua_isstring(L, -1))
+			name = strdup(lua_tostring(L, -1));
+		lua_pop(L, 1);
+
+		lua_getfield(L, e, "cmd");
+		if (lua_istable(L, -1))
+			cmd = build_argv(L, lua_gettop(L));
+		lua_pop(L, 1);
+
+		if (!name || !cmd) {
+			lua_pop(L, 1); /* entry table */
+			continue;
+		}
+
+		buf[count].name = name;
+		buf[count].cmd = cmd;
+
+		lua_getfield(L, e, "app_id");
+		buf[count].app_id = lua_isstring(L, -1) ? strdup(lua_tostring(L, -1)) : name;
+		lua_pop(L, 1);
+
+		lua_getfield(L, e, "w");
+		if (lua_isnumber(L, -1))
+			w = (float)lua_tonumber(L, -1);
+		lua_pop(L, 1);
+		buf[count].w = (w > 0.0f && w <= 1.0f) ? w : 0.6f;
+
+		lua_getfield(L, e, "h");
+		if (lua_isnumber(L, -1))
+			h = (float)lua_tonumber(L, -1);
+		lua_pop(L, 1);
+		buf[count].h = (h > 0.0f && h <= 1.0f) ? h : 0.6f;
+
+		count++;
+		lua_pop(L, 1); /* entry table */
+	}
+	lua_pop(L, 1); /* scratchpad table */
+
+	if (count > 0) {
+		scratchpads = buf; /* leaked on reload -- see NOTES.md */
+		nscratchpads = count;
+	} else {
+		free(buf);
+	}
+}
+
 /* Builds the Arg for one wasp.keys[i] entry, based on its action name.
  * Every action wasp_lookup_action() (dwl.c) knows about needs a case here
  * -- see the comment above dwl.c's actiontable for the full list. */
@@ -544,6 +640,15 @@ build_key_arg(lua_State *L, int e, const char *action)
 			}
 			arg.v = delta;
 		}
+	} else if (!strcmp(action, "toggle-scratchpad")) {
+		/* Just the slot's name -- resolved against the live
+		 * `scratchpads` array at call time (dwl.c's togglescratchpad()),
+		 * not looked up here, so it keeps working across a reload even
+		 * though that array itself gets rebuilt from scratch each time. */
+		lua_getfield(L, e, "name");
+		if (lua_isstring(L, -1))
+			arg.v = strdup(lua_tostring(L, -1));
+		lua_pop(L, 1);
 	}
 	/* togglefloating/togglefullscreen/togglebar/zoom/killclient/quit take
 	 * no arg -- the zeroed Arg from memset above is exactly right. */
@@ -676,6 +781,7 @@ waspconfig_load(void)
 		load_terminal_menu(L, wasptbl); /* before load_keys(): spawn-terminal/-menu */
 		load_keys(L, wasptbl);
 		load_autostart(L, wasptbl);
+		load_scratchpad(L, wasptbl);
 	}
 	lua_pop(L, 1); /* the wasp global (or whatever lua_getglobal pushed) */
 
