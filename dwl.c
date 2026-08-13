@@ -1465,6 +1465,7 @@ createmon(struct wl_listener *listener, void *data)
 		for (i = 0; i < LENGTH(tags); i++) {
 			ExtWorkspaceTag *wt = ecalloc(1, sizeof(*wt));
 			char id[64];
+			uint32_t coord = (uint32_t)i;
 
 			wt->mon = m;
 			wt->tag = (unsigned int)i;
@@ -1476,6 +1477,15 @@ createmon(struct wl_listener *listener, void *data)
 			m->ext_workspaces[i]->data = wt;
 			wlr_ext_workspace_handle_v1_set_group(m->ext_workspaces[i], m->ext_group);
 			wlr_ext_workspace_handle_v1_set_name(m->ext_workspaces[i], tags[i]);
+			/* wasp: a single-element (0-based tag index) coordinate, purely
+			 * so clients that sort workspaces by `coordinates` rather than
+			 * assuming a meaningful arrival order (a real one -- see
+			 * Utumno's modules/Workspaces.qml) have something non-empty to
+			 * sort by. Without this every workspace's coordinates array is
+			 * empty, which makes such a sort a no-op (nothing to compare)
+			 * and leaves the client showing whatever order it happened to
+			 * receive/store them in internally, not tag order. */
+			wlr_ext_workspace_handle_v1_set_coordinates(m->ext_workspaces[i], &coord, 1);
 		}
 	}
 

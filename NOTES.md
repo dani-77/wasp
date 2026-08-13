@@ -287,6 +287,25 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
   correctly `state=1` (active) while the rest read `state=0`, matching
   a freshly created monitor's default `tagset`.
 
+  **Found for real against Utumno (2026-08-13), not just theorized:**
+  `wlr_ext_workspace_handle_v1_set_coordinates()` also needs calling --
+  one `uint32_t` per workspace, its 0-based tag index -- or every
+  workspace's `coordinates` comes through empty. This isn't cosmetic:
+  Utumno's own generic-protocol bar widget
+  (`~/Projectos/utumno/modules/Workspaces.qml`) *already* sorts its
+  workspace list by `coordinates` before rendering (correct, defensive
+  code on their side, comparing element-by-element, falling back to `0`
+  for missing entries) -- but comparing two empty arrays makes that
+  comparator a no-op every time, so the sort silently did nothing and
+  the bar showed whatever order Quickshell's own internal list happened
+  to be in (observed live: `9,6,8,7,5,4,1,3,2`), not tag order. Confirmed
+  the fix with the same standalone test client, extended to also decode
+  the `coordinates` event: `coords=[0,] name=1` .. `coords=[8,] name=9`,
+  in order, after adding the `set_coordinates()` call right after
+  `set_name()` in `createmon()`'s workspace-creation loop. No change
+  needed in Utumno at all in the end -- the bug was entirely on wasp's
+  side not providing what Utumno's own code already correctly expected.
+
 ## Reference patches to adapt (not apply as-is)
 - **hot-reload** — reference for what *not* to copy: its `dlopen`'d `.so` +
   `HOT`/cold-part macro split is solving "don't recompile" via a mechanism
