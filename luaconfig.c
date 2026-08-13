@@ -487,7 +487,8 @@ build_key_arg(lua_State *L, int e, const char *action)
 		arg.v = termcmd;
 	} else if (!strcmp(action, "spawn-menu")) {
 		arg.v = menucmd;
-	} else if (!strcmp(action, "focusstack") || !strcmp(action, "incnmaster")) {
+	} else if (!strcmp(action, "focusstack") || !strcmp(action, "incnmaster")
+			|| !strcmp(action, "movestack")) {
 		arg.i = 1;
 		lua_getfield(L, e, "dir");
 		if (lua_isnumber(L, -1))

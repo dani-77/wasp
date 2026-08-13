@@ -107,6 +107,42 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
    more elaborate than dwl's simple `Rule[]` -- probably more useful for
    the general *idea* of how a centered-floating rule should feel than for
    directly portable code).
+7. **Rounded border corners, and blur too.** Reference for the *feel*:
+   Daniel's own **spitfire** -- `spitfire.border = { width, active,
+   inactive, radius }` (see its `examples/config.lua`), border drawn *on
+   top of* the window, radius masks the window's own square corners along
+   with rounding the border itself. wasp's border today is 4 separate flat
+   `wlr_scene_rect` rects per client (`client_set_border_color()` /
+   `resize()` in `dwl.c`) -- plain rects can't be rounded (or blurred) on
+   their own, needs an actual rendering change, not just a config knob.
+   **Real path forward found (2026-08-13): [SceneFX]
+   (https://github.com/wlrfx/scenefx)** -- "a drop-in replacement for the
+   wlroots scene API" adding rounded corners (separate inner/outer
+   radius), drop shadows, opacity, and background blur, while keeping the
+   scene-graph model wasp/dwl already builds on. Not original work from
+   scratch after all. Three things to check out together, all wlroots+
+   scenefx-based real compositors:
+   - **[mwc](https://github.com/dqrk0jeste/mwc)** -- tiling compositor,
+     wlroots 0.18 + scenefx 0.2. Probably the closest in spirit to
+     dwl/wasp of the three.
+   - **[maomaowm](https://github.com/Gugu7264/maomaowm)** -- "dwl but no
+     suckless", wlroots+scenefx.
+   - **MangoWC** (already flagged above for animations) -- worth checking
+     whether it *also* uses scenefx for its own eye-candy, given it's the
+     confirmed dwl-fork precedent already.
+   - **dwl itself has a real, if unmaintained, integration to start
+     from**: `stale-patches/scenefx/` in the official dwl-patches repo
+     (`https://codeberg.org/dwl/dwl-patches/raw/branch/main/stale-patches/scenefx/scenefx.patch`,
+     moved out of the active `patches/` directory, last touched
+     2025-12-18). Its own README (worth reading in full before starting)
+     flags real caveats: blur doesn't work together with opacity on the
+     same window; `scenefx-0.2` must come *before* `wlroots-0.18` in the
+     Makefile's dependency order; Xwayland clients don't get rounded
+     borders/shadows (shadows might still work independently); several
+     patch variants exist for different scenefx commits, some missing
+     blur support (only the "0.8-dev" variant has rounded borders + blur
+     + shadows all together) -- read carefully and pick the matching
+     scenefx version, don't just grab the newest-looking one blind.
 
 ## Core (not patch-derived)
 - **Lua config, live-reloadable — done (2026-08-12), bound-key trigger**:

@@ -75,10 +75,14 @@ install: wasp
 	mkdir -p $(DESTDIR)$(DATADIR)/wayland-sessions
 	cp -f wasp.desktop $(DESTDIR)$(DATADIR)/wayland-sessions/wasp.desktop
 	chmod 644 $(DESTDIR)$(DATADIR)/wayland-sessions/wasp.desktop
+	mkdir -p $(DESTDIR)$(DATADIR)/wasp
+	cp -f examples/config.lua $(DESTDIR)$(DATADIR)/wasp/config.lua
+	chmod 644 $(DESTDIR)$(DATADIR)/wasp/config.lua
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/wasp $(DESTDIR)$(PREFIX)/bin/wasp-statusbar \
 		$(DESTDIR)$(PREFIX)/bin/wasp-session $(DESTDIR)$(MANDIR)/man1/dwl.1 \
-		$(DESTDIR)$(DATADIR)/wayland-sessions/wasp.desktop
+		$(DESTDIR)$(DATADIR)/wayland-sessions/wasp.desktop \
+		$(DESTDIR)$(DATADIR)/wasp/config.lua
 
 .SUFFIXES: .c .o
 .c.o:

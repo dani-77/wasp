@@ -332,6 +332,7 @@ static void mapnotify(struct wl_listener *listener, void *data);
 static void maximizenotify(struct wl_listener *listener, void *data);
 static void monocle(Monitor *m);
 static void motionabsolute(struct wl_listener *listener, void *data);
+static void movestack(const Arg *arg);
 static void motionnotify(uint32_t time, struct wlr_input_device *device, double sx,
 		double sy, double sx_unaccel, double sy_unaccel);
 static void motionrelative(struct wl_listener *listener, void *data);
@@ -513,6 +514,7 @@ static const struct { const char *name; ActionFn fn; } actiontable[] = {
 	{ "spawn-terminal",   spawn },
 	{ "spawn-menu",       spawn },
 	{ "focusstack",       focusstack },
+	{ "movestack",        movestack },
 	{ "incnmaster",       incnmaster },
 	{ "setmfact",         setmfact },
 	{ "zoom",             zoom },
@@ -2287,6 +2289,47 @@ monocle(Monitor *m)
 		snprintf(m->ltsymbol, LENGTH(m->ltsymbol), "[%d]", n);
 	if ((c = focustop(m)))
 		wlr_scene_node_raise_to_top(&c->scene->node);
+}
+
+void
+movestack(const Arg *arg)
+{
+	/* Adapted from dwl-patches' movestack patch: swaps the focused
+	 * client's position in the tiling order (dwl.c's `clients` list, what
+	 * tile()/monocle()/dwindle() walk) with the next/previous *visible*
+	 * client, instead of just moving keyboard focus like focusstack()
+	 * does. arg->i > 0 moves it later in the stack, < 0 moves it earlier.
+	 * Reachable from config.lua as the "movestack" action. */
+	Client *c, *sel = focustop(selmon);
+
+	if (!sel || wl_list_length(&clients) <= 1)
+		return;
+
+	if (arg->i > 0) {
+		wl_list_for_each(c, &sel->link, link) {
+			if (&c->link == &clients) {
+				c = wl_container_of(&clients, c, link);
+				break; /* wrap past the sentinel node */
+			}
+			if (VISIBLEON(c, selmon) || &c->link == &clients)
+				break; /* found it */
+		}
+	} else {
+		wl_list_for_each_reverse(c, &sel->link, link) {
+			if (&c->link == &clients) {
+				c = wl_container_of(&clients, c, link);
+				break; /* wrap past the sentinel node */
+			}
+			if (VISIBLEON(c, selmon) || &c->link == &clients)
+				break; /* found it */
+		}
+		/* back up one client */
+		c = wl_container_of(c->link.prev, c, link);
+	}
+
+	wl_list_remove(&sel->link);
+	wl_list_insert(&c->link, &sel->link);
+	arrange(selmon);
 }
 
 void

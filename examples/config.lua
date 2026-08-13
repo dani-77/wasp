@@ -79,6 +79,7 @@ wasp.autostart = {
 --   spawn-terminal    (none)               run wasp.terminal
 --   spawn-menu        (none)               run wasp.menu
 --   focusstack        dir = 1 | -1          next/prev window in stack
+--   movestack         dir = 1 | -1          swap the focused window's own position with the next/prev one
 --   incnmaster        dir = 1 | -1          grow/shrink the master area's window count
 --   setmfact          delta = <float>       grow/shrink the master area's size (+/-)
 --   view              tag = 1..9 | "all" (omit = toggle back)   switch workspace
@@ -108,6 +109,13 @@ end
 -- Launchers
 bind({ "mod", "shift" }, "Return", "spawn-terminal")
 bind({ "mod" },          "p",      "spawn-menu")
+-- A second launcher, if you use one alongside wasp.menu -- "d77run" here
+-- is just what this machine has (see ~/Projectos/d77run); swap the cmd
+-- for whatever you actually run. A different modifier than "mod" (here
+-- "super", i.e. the Logo/Windows key) so it doesn't compete with any
+-- mod+<key> binding you'd rather keep where it already is -- any mod name
+-- works standalone like this, not just as part of "mod".
+-- bind({ "super" }, "r", "spawn", { cmd = { "d77run" } })
 
 -- Media keys — dedicated hardware keys, so no modifier needed (they can't
 -- collide with anything text-related; `mods = {}` means "bare key").
@@ -125,6 +133,10 @@ bind({ "mod" }, "j",    "focusstack", { dir = 1 })
 bind({ "mod" }, "k",    "focusstack", { dir = -1 })
 bind({ "mod" }, "Tab",  "view") -- go back to the previously selected tags
 bind({ "mod" }, "Return", "zoom")  -- swap focused window into/out of master
+-- Swap the focused window's own position in the stack (not just where
+-- focus goes, like focusstack above) with the next/previous one.
+bind({ "mod", "shift" }, "j", "movestack", { dir = 1 })
+bind({ "mod", "shift" }, "k", "movestack", { dir = -1 })
 
 -- Resize
 bind({ "mod" }, "i", "incnmaster", { dir = 1 })

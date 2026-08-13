@@ -90,6 +90,15 @@ mkdir -p ~/.config/wasp
 cp examples/config.lua ~/.config/wasp/config.lua
 ```
 
+`make install` also drops a copy at `/usr/local/share/wasp/config.lua`
+(`$PREFIX/share/wasp/`) — if you installed from a release tarball rather
+than a source checkout, that's where to find it instead of hunting for
+`examples/` in source you may not have on disk:
+
+```sh
+cp /usr/local/share/wasp/config.lua ~/.config/wasp/config.lua
+```
+
 `examples/config.lua` is both the default and the reference: appearance,
 gaps, keyboard, terminal/menu, and a full suggested keymap (with a comment
 block explaining every action and its fields). It'll keep growing as more
