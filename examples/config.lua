@@ -178,6 +178,14 @@ bind({}, "XF86AudioRaiseVolume", "spawn", { cmd = { "amixer", "-q", "set", "Mast
 bind({}, "XF86AudioLowerVolume", "spawn", { cmd = { "amixer", "-q", "set", "Master", "5%-" } })
 bind({}, "XF86AudioMute",        "spawn", { cmd = { "amixer", "-q", "set", "Master", "toggle" } })
 
+-- Screenshot (grim, wlr-screencopy-based) -- Print Screen, whole output(s),
+-- saved to ~/screenshot-<timestamp>.png. Wrapped in "sh -c" because spawn()
+-- execvp()s directly (no shell), so "~" and "$(date ...)" need something to
+-- expand them. Region-select instead of full-screen needs `slurp` too (not
+-- installed on this machine) -- swap the cmd for:
+-- { "sh", "-c", 'grim -g "$(slurp)" ~/screenshot-$(date +%Y%m%d-%H%M%S).png' }
+bind({}, "Print", "spawn", { cmd = { "sh", "-c", "grim ~/screenshot-$(date +%Y%m%d-%H%M%S).png" } })
+
 -- Window navigation
 bind({ "mod" }, "j",    "focusstack", { dir = 1 })
 bind({ "mod" }, "k",    "focusstack", { dir = -1 })
