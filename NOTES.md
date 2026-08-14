@@ -9,8 +9,11 @@ decided all at once.
 
 ## Up next (2026-08-12, Daniel's stated order)
 Three things, in this order (2026-08-14: #2 and #3 done, #1 likely already
-covered in substance -- see its own note -- so this list is effectively
-closed out, modulo confirming #1 with Daniel):
+covered in substance -- see its own note -- so the original three-item list
+is effectively closed out, modulo confirming #1 with Daniel). #7 (scenefx
+blur/rounded corners) and #8 (touchpad gestures) were queued in after,
+2026-08-13/14 -- #8 has no rendering-code dependency on #7 and is assessed
+easier, so do it first if picking one:
 
 1. **Keyboard-only window resize/move.** **Scoped down (2026-08-12)**:
    not a sway/i3 modal resize-mode after all — Daniel's call was to keep
@@ -363,6 +366,111 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
      blur support (only the "0.8-dev" variant has rounded borders + blur
      + shadows all together) -- read carefully and pick the matching
      scenefx version, don't just grab the newest-looking one blind.
+   - **[ashwc](https://github.com/shadowash8/ashwc)** (added 2026-08-14,
+     Daniel's find) -- a closer match than any of the three above:
+     wlroots **0.20** + scenefx **0.5**, wasp's exact versions, and
+     scenefx 0.5 is already packaged in srcpkgs-d77 -- nothing new to
+     package just to try this. Actually read its source (a dwl-unrelated
+     compositor, ~20 `src/*/*.c` modules, `meson`-built, forked from
+     [mwc](https://github.com/nikoloc/mwc) itself), not just skimmed the
+     README, since it's the strongest concrete reference so far:
+     - `src/rendering/rendering.c` is the whole eye-candy pipeline in one
+       file, `toplevel_draw_frame()` called once per client per output
+       frame (same "reapply every tick" shape wasp's own animation code
+       already uses for MOVE/TAG/OPEN/CLOSE): draws the border rect
+       (`wlr_scene_rect_set_corner_radii()` + a
+       `wlr_scene_rect_set_clipped_region()` so the border's own inner
+       edge doesn't square off the corner it's rounding), draws a
+       drop shadow (`wlr_scene_shadow_create()`, scenefx-native node),
+       then `wlr_scene_node_for_each_buffer()` walks every actual
+       surface/subsurface buffer under the client and (a) sets per-corner
+       radii on it directly (`wlr_scene_buffer_set_corner_radii()` --
+       only the buffer's four *outer* corners get rounded, checked via
+       its `(x,y)` offset against the toplevel's own geometry box, so
+       subsurfaces/popups in the middle stay square) and (b) lazily
+       creates+positions a `wlr_scene_blur` node right behind it
+       (`buffer_ensure_blur()` -- created once, cached on
+       `buffer->node.data`, torn down off the buffer's own `destroy`
+       signal, so it's safe to call unconditionally every frame).
+       Background/wallpaper blur is a second, separate mechanism:
+       one `wlr_scene_optimized_blur` per output, created alongside
+       `wlr_scene_output_create()` in `output.c` and sized to the
+       output; `wlr_scene_set_blur_data(scene, num_passes, radius,
+       noise, brightness, contrast, saturation)` (global, not
+       per-window) drives both blur kinds' actual look, values off a
+       `blur_radius`/`blur_noise`/`blur_brightness`/`blur_contrast`/
+       `blur_saturation` config block (`default.conf`).
+     - Renderer swap is the other real piece: `fx_renderer_create()`
+       (scenefx) in place of `wlr_renderer_autocreate()`, and
+       `#include <scenefx/types/wlr_scene.h>` instead of wlroots' own
+       `wlr/types/wlr_scene.h` -- scenefx's header is a superset/
+       drop-in, existing `wlr_scene_rect_create()`/etc. calls keep
+       working unchanged, the new `wlr_scene_*_set_corner_radii()`/
+       `wlr_scene_blur_*()`/`wlr_scene_shadow_*()`/optimized-blur calls
+       are what's actually new API surface.
+     - **Real wasp-specific wrinkle, not just a config knob**: ashwc's
+       border is a single `wlr_scene_rect` per client, which is *why*
+       `set_corner_radii()`/`set_clipped_region()` on it just works.
+       wasp's border today is still dwm's original **4 separate flat
+       rects** (`c->border[4]` -- top/bottom/left/right strips that only
+       visually meet at the corners, see `resize()`/`createnotify()` in
+       `dwl.c`) -- rounding *that* shape isn't a drop-in call, the four
+       strips would need collapsing into one rect (ashwc's model) first,
+       independent of whichever scenefx call ends up doing the actual
+       rounding. Worth deciding up front rather than discovering it
+       mid-patch.
+     - Confirms the two real caveats the stale dwl-patches README already
+       flagged still apply here too: blur is per-surface-buffer
+       (skipped for popups/subsurfaces on purpose, see
+       `iter_scene_buffer_apply_effects()`'s early returns), and nothing
+       in ashwc treats Xwayland clients specially for radii/blur --
+       likely the same "Xwayland doesn't get rounded corners" gap, not
+       verified live since ashwc's own README doesn't mention Xwayland
+       support at all (may not build with `XWAYLAND` the way wasp does).
+     - Not yet done: actually wiring any of this into `dwl.c` --
+       this is reference material read and written up, not a landed
+       change. `wasp.blur = { enable, radius, passes, noise, brightness,
+       contrast, saturation }` alongside an extended `wasp.gaps`-sibling
+       `border_radius` (+ maybe per-corner toggles, ashwc's
+       `border_radius_corners.{top_left,top_right,bottom_left,
+       bottom_right}`) would follow the same `luaconfig.c` field-reader
+       pattern as `wasp.gaps`/`wasp.animations`.
+
+8. **Touchpad gestures.** (2026-08-14, researched via ashwc after Daniel
+   asked whether it'd be easy) -- wasp has no gesture code at all today
+   (`dwl.c` has zero `events.swipe_*`/`pinch_*` listeners), but wlroots
+   already delivers swipe/pinch off the very same `wlr_pointer` wasp
+   already listens on for motion/buttons -- no missing plumbing has to go
+   in first, this would be new listeners on an object wasp already owns.
+   ashwc's shape (`src/pointer/pointer.c` + `src/gestures/gestures.{c,h}`,
+   both short files, actually read not just skimmed): three listeners on
+   `wlr_pointer->events.{swipe_begin,swipe_update,swipe_end}` -- begin
+   resets a `(dx,dy)` accumulator and stashes the finger count, update
+   just sums deltas, end classifies the dominant axis
+   (`fabs(dx) > fabs(dy)` ? left/right : up/down) and calls a small
+   dispatcher (`handle_swipe(direction, fingers)`) that walks a `wl_list`
+   of registered `{type, fingers, direction, action, args}` gesture
+   bindings and fires whichever one matches -- reusing the exact same
+   `keybind_action_func_t` action-dispatch already used for regular
+   keybinds, no separate action table needed. Config surface is one line
+   per gesture (`default.conf`: `gesture swipe <fingers> <direction>
+   <action> [args...]`, e.g. `gesture swipe 4 left next_workspace`).
+   **Caveat found reading the code, not the README**: `enum gesture_type`
+   declares `GESTURE_PINCH` too, but nothing in the codebase actually
+   wires `wlr_pointer`'s pinch events anywhere -- ashwc's real, working
+   gesture support is swipe-only. Pinch would need its own three
+   listeners built from scratch if ever wanted; ashwc isn't a reference
+   for that part.
+   **Assessment: easy, and doesn't touch rendering at all** -- a good
+   candidate to land *before* the scenefx work above, not after.
+   Comparable in size to the scratchpad feature already shipped: ~40-60
+   lines of new `dwl.c` code (3 listeners + a direction-classify end
+   handler, reusing wasp's existing keybind action functions instead of
+   building new ones) plus a `wasp.gestures = { {fingers=, direction=,
+   action=, args=}, ... }` config array following the exact same
+   `luaconfig.c` load pattern as `wasp.rules`/`wasp.scratchpad`. No new
+   dependency either -- libinput/wlroots already deliver the events wasp
+   would just start listening for.
 
 ## Core (not patch-derived)
 - **Lua config, live-reloadable — done (2026-08-12), bound-key trigger**:
