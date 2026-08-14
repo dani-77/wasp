@@ -926,12 +926,31 @@ tag_edge_box(Monitor *m, struct wlr_box real)
  * at fractional output scale, while looking fine at scale 1.0, where
  * physical and logical happen to coincide and the bug is invisible.
  * wlr_surface_state.current.width/height (reached via
- * wlr_scene_surface_try_from_buffer()) is already the correct,
- * buffer_scale-independent logical size wlroots itself uses; buffer->
- * buffer->width/height is only the fallback for a non-surface-backed
- * buffer (e.g. a single-pixel buffer), where physical/logical doesn't
- * meaningfully differ anyway. */
-struct wasp_buf_ctx { float scale_x, scale_y, opacity; };
+ * wlr_scene_surface_try_from_buffer()) is the correct,
+ * buffer_scale-independent logical size wlroots itself uses -- but only
+ * once the client has actually caught up and committed a buffer at (close
+ * to) its target size. For OPEN specifically, that hasn't happened yet on
+ * the earliest ticks: resize()'s real head already requested the target
+ * size via client_set_size(), but current.width/height still reflects
+ * whatever the client had committed *before* that (its own default
+ * window size, e.g. a scratchpad's target being much larger than
+ * alacritty's own default). Scaling from that stale, too-small size
+ * shrank the content into a tiny corner of an already-full-size border
+ * for as long as the client took to catch up -- confirmed live (2026-08-14,
+ * a named scratchpad specifically): imperceptibly brief at output scale
+ * 1.0 (client catches up almost immediately), clearly visible at 1.25
+ * (the extra buffer_scale/fractional-scale negotiation round-trip before
+ * the client's *correctly sized* buffer lands takes measurably longer).
+ * ref_w/ref_h (when non-zero) sidestep this entirely: the caller passes
+ * the tween's own already-known-correct target content size instead of
+ * asking each buffer for its (possibly still-stale) current size, so the
+ * "zoom" is always proportional to where the animation is *actually*
+ * headed, buffer catch-up or not. 0,0 falls back to the natural
+ * per-buffer size (used for CLOSE, snapshotting an already fully-settled,
+ * already-correct live frame, where this staleness problem can't occur in
+ * the first place) or a non-surface-backed buffer (e.g. a single-pixel
+ * buffer, where physical/logical doesn't meaningfully differ anyway). */
+struct wasp_buf_ctx { float scale_x, scale_y, opacity; int ref_w, ref_h; };
 
 static void
 scale_buffer_iter(struct wlr_scene_buffer *buffer, int sx, int sy, void *data)
@@ -943,8 +962,10 @@ scale_buffer_iter(struct wlr_scene_buffer *buffer, int sx, int sy, void *data)
 	if (!buffer->buffer)
 		return;
 	if (ctx->scale_x != 1.0f || ctx->scale_y != 1.0f) {
-		ss = wlr_scene_surface_try_from_buffer(buffer);
-		if (ss) {
+		if (ctx->ref_w && ctx->ref_h) {
+			nat_w = ctx->ref_w;
+			nat_h = ctx->ref_h;
+		} else if ((ss = wlr_scene_surface_try_from_buffer(buffer))) {
 			nat_w = ss->surface->current.width;
 			nat_h = ss->surface->current.height;
 		} else {
@@ -1146,6 +1167,8 @@ start_animation(Client *c)
 		ctx.scale_y = c->anim.target.height
 				? (float)c->anim.current.height / (float)c->anim.target.height : 1.0f;
 		ctx.opacity = c->anim.opacity_now = c->anim.opacity_from;
+		ctx.ref_w = c->anim.target.width - 2 * (int)c->bw;
+		ctx.ref_h = c->anim.target.height - 2 * (int)c->bw;
 		wlr_scene_node_for_each_buffer(&c->scene_surface->node, scale_buffer_iter, &ctx);
 	}
 	reschedule_all_outputs();
@@ -1199,6 +1222,8 @@ animate_client(Client *c)
 		ctx.scale_y = c->anim.target.height ? (float)vis.height / (float)c->anim.target.height : 1.0f;
 		ctx.opacity = c->anim.opacity_now =
 				c->anim.opacity_from + (c->anim.opacity_to - c->anim.opacity_from) * e;
+		ctx.ref_w = c->anim.target.width - 2 * (int)c->bw;
+		ctx.ref_h = c->anim.target.height - 2 * (int)c->bw;
 		wlr_scene_node_for_each_buffer(&c->scene_surface->node, scale_buffer_iter, &ctx);
 	}
 
@@ -1367,6 +1392,11 @@ tick_closing_clients(void)
 		scale = cc->from.width ? (float)b.width / (float)cc->from.width : 1.0f;
 		ctx.scale_x = ctx.scale_y = scale;
 		ctx.opacity = 1.0f - e;
+		/* 0,0 -- per-buffer natural size is already correct here, unlike
+		 * OPEN (see scale_buffer_iter()'s own comment): this snapshot was
+		 * taken from an already fully-settled, already-correctly-sized
+		 * live frame, nothing for a client to still be catching up on. */
+		ctx.ref_w = ctx.ref_h = 0;
 		wlr_scene_node_for_each_buffer(&cc->tree->node, scale_buffer_iter, &ctx);
 
 		if (p >= 1.0f) {
@@ -3116,6 +3146,25 @@ mapnotify(struct wl_listener *listener, void *data)
 	/* Insert this client into client lists. */
 	wl_list_insert(&clients, &c->link);
 	wl_list_insert(&fstack, &c->flink);
+
+	/* wasp: if this is a freshly-spawned scratchpad client we're waiting
+	 * on (see togglescratchpad()), mark it isfloating *now*, before
+	 * applyrules()/setmon() below ever run -- otherwise, for the brief
+	 * moment between setmon() assigning its tags and the scratchpad-claim
+	 * block further down actually calling setfloating(c, 1), arrange()'s
+	 * tile() pass sees isfloating still false and treats it as an
+	 * ordinary tiled client, resizing it to fill the whole monitor -- a
+	 * third, wrong target sandwiched between the client's own natural
+	 * size and the real scratchpad box. Always instant/imperceptible
+	 * without animations; with wasp.animations on, that wrong target
+	 * corrupts the OPEN tween's own start box, visible as a garbled,
+	 * non-uniformly-stretched zoom-in (confirmed live, 2026-08-14 --
+	 * more visible at a fractional output scale, where the client also
+	 * takes measurably longer to settle, but present regardless of
+	 * scale). */
+	if (pending_scratchpad_name && selmon
+			&& !strcmp(client_get_appid(c), pending_scratchpad_appid))
+		c->isfloating = 1;
 
 	/* Set initial monitor, tags, floating status, and focus:
 	 * we always consider floating, clients that have parent and thus

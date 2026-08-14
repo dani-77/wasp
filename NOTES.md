@@ -174,13 +174,55 @@ closed out, modulo confirming #1 with Daniel):
      tween is left completely undisturbed until it either finishes
      (hiding the node) or a real `tagin()` reverses it.
 
-   Not independently verified in isolation the same way as the two above
-   -- no keyboard-input-injection tool (`wtype`/`ydotool`/`wlrctl`) was
-   available in this environment to drive a real tag switch inside the
-   nested test harness, only reasoned through and confirmed by a clean
-   build. Confirm live after the next session restart: switch tags with
-   at least one window on the tag being left, watch that it actually
-   disappears and doesn't reappear when switching to an unrelated tag.
+   Confirmed live (2026-08-14) after installing `wlrctl` (virtual-keyboard
+   protocol, lets a script send real keypresses into a nested test
+   session -- no more guessing from code review alone): tag switching
+   itself was fixed by the above. But two more real bugs surfaced right
+   after, same day, both specific to *floating* clients (a named
+   scratchpad, `wasp.scratchpad`) -- confirmed live first (typed `htop`
+   into a scratchpad that was supposedly hidden, watched it actually
+   run), then reproduced and fixed in the same nested-plus-`wlrctl`
+   harness before ever touching the real session again:
+
+   - **A named scratchpad, once hidden, stayed fully visible *and
+     interactive* forever** (not just visually stuck -- accepted
+     keyboard input, ran `htop` in it while "hidden"). Root cause: the
+     `tag_hide_after` guard added above was itself gated on the wrong
+     signal. `resize()`'s own `interact` parameter is *also* set by
+     `commitnotify()` for every floating client (`c->isfloating &&
+     !c->isfullscreen`), for an unrelated reason (which bounding box to
+     clamp against) -- gating the guard on `!interact` meant it silently
+     never applied to *any* floating client, since every one of its
+     commits looked "interactive." A tiled window's commits pass
+     `interact=0`, which is why plain tag-switching (tiled windows) had
+     already tested clean. Fixed: gate on `c == grabc` (the client
+     actually mid-interactive-drag) instead -- `moveresizekb()` (a
+     discrete keypress, no continuous grab of its own) now briefly
+     stands in as `grabc` around its own `resize()` call so it keeps
+     behaving the same (instant, no animation) as before.
+   - **A scratchpad's own OPEN animation rendered as a tiny, wrongly-
+     proportioned blob of content inside an already-full-size border**
+     (worse at output scale 1.25 than 1.0, but present at both --
+     confirmed by testing with `wasp.animations.enable = false`, which
+     showed neither). Root cause, found via one more debug-logged nested
+     run: for the brief window between `applyrules()`/`setmon()` setting
+     a freshly-spawned scratchpad's tags and `mapnotify()`'s own
+     scratchpad-claim block (further down) actually calling
+     `setfloating(c, 1)`, the client's `isfloating` flag was still
+     false -- so `arrange()`'s `tile()` pass caught it as an ordinary
+     tiled client and resized it to fill the *entire monitor*, a third,
+     wildly wrong target sandwiched between the client's own natural
+     size and the real scratchpad box. Always instant/invisible without
+     animations; with them, that wrong target corrupted the OPEN tween's
+     start box via the "resuming" retarget path. Fixed: mark `isfloating
+     = 1` as soon as the pending-scratchpad match is detected, *before*
+     `applyrules()`/`setmon()` ever run, so `tile()` never gets the
+     chance to claim it. A small residual (content very slightly
+     overflowing the border for the first couple of frames, since the
+     "resuming" path still reuses the OPEN tween's original start box
+     rather than recomputing one for the corrected target) was left as-is
+     -- clearly minor next to the fixed bug, not chased further this
+     session.
 
 Two more added 2026-08-12 (not yet ordered relative to the three above):
 
