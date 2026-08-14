@@ -8,8 +8,9 @@ recompile. Add to this as things come to mind; nothing here needs to be
 decided all at once.
 
 ## Up next (2026-08-12, Daniel's stated order)
-Three things, in this order — not started yet, logging the order/scoping
-notes before picking any of them up:
+Three things, in this order (2026-08-14: #2 and #3 done, #1 likely already
+covered in substance -- see its own note -- so this list is effectively
+closed out, modulo confirming #1 with Daniel):
 
 1. **Keyboard-only window resize/move.** **Scoped down (2026-08-12)**:
    not a sway/i3 modal resize-mode after all — Daniel's call was to keep
@@ -34,13 +35,246 @@ notes before picking any of them up:
    (`spitfire.window.toggle_scratchpad()`), wasn't ported; not clearly
    more useful than just adding a second named slot, revisit only if it
    turns out to actually be missed.
-3. **Animations, MangoWC-style.** MangoWC (`mangowm/mango`) is the
-   confirmed real dwl fork precedent for this (see project memory) --
-   need to actually read its source for how it drives open/close/move/
-   tag-switch tweening on top of `wlr_scene` before designing wasp's own;
-   haven't done that read yet. Biggest lift of the three -- needs a
-   frame-timer-driven interpolation system touching `resize()`/`arrange()`/
-   `mapnotify()`/`unmapnotify()`, none of which exist yet.
+3. ~~**Animations, MangoWC-style.**~~ **Done (2026-08-14)** -- MangoWC's
+   own source (`~/d77void-pkgs/hostdir/sources/mangowc-0.15.4`,
+   `src/animation/{client,common,tag}.h`) was actually read this time, as
+   flagged below as still-needed -- design mirrors its mechanism closely
+   (per-`wlr_output` `frame`-listener tick, no separate timer; cubic-
+   bezier easing baked to a 256-point lookup table since the curve isn't
+   solvable for y(x) directly; a detached scene-graph snapshot for CLOSE,
+   since the real `Client` is freed synchronously on unmap and nothing
+   else survives to animate), but re-scoped down for a first version --
+   deliberately NOT ported: layer-shell animation (wasp's bar isn't
+   `Client`-based, no ask for it), per-`wasp.rules`-entry overrides
+   (`isnoanimation`/per-rule open-close type -- one global on/off +
+   global durations/curves for now), and `slide`-from-edge for OPEN
+   (ships `fade`/`zoom` only; TAG already has its own edge-slide, `slide`
+   for OPEN would reuse the same helper later if wanted).
+
+   New `Client.anim` (`struct wasp_animation`) plus a separate
+   `ClosingClient`/`closing_clients` list for CLOSE. Touches `resize()`
+   (split into the real bounds/configure head + a new `start_animation()`
+   that arms/updates `c->anim` instead of writing the scene graph
+   directly), `arrange()` (its old binary
+   `wlr_scene_node_set_enabled()` tag-visibility toggle now calls
+   `tagin()`/`tagout()` when animations are on), `mapnotify()` (one-shot
+   `pending_action = AnimOpen` flag), `unmapnotify()` (snapshots via
+   `init_closing_client()` *before* `setmon(c, NULL, 0)` wipes `c->mon` --
+   an early draft got this ordering wrong and would have silently never
+   animated any close), and `rendermon()` (ticks every animating
+   client/closing snapshot before each commit, re-arms via
+   `wlr_output_schedule_frame()` only while something's actually
+   animating). `wasp.animations` config (`enable`, per-action
+   `duration_*`, `type_open`/`type_close`, `zoom_ratio`,
+   `fade_from_opacity`, `tag_direction`, per-action `curve_*` cubic-bezier
+   control points) follows the `wasp.gaps` load pattern exactly; two new
+   `luaconfig.c` field-readers (`read_float_field`/`read_bezier_field`)
+   were genuinely needed (fractional fields), durations stayed plain
+   integer-ms via the existing `read_int_field`. `enable = false` by
+   default reproduces the original instant behavior bit-for-bit.
+
+   A real correctness wrinkle worth remembering: a brand-new client's
+   very first `arrange()` pass looks, from `arrange()`'s own perspective,
+   identical to a tag-hidden client becoming visible again (both start
+   with their scene node disabled) -- without care, `tile()`/`dwindle()`/
+   `monocle()`'s own relayout pass right after `mapnotify()` armed the
+   OPEN tween would immediately reclassify it as a plain MOVE or TAG and
+   silently kill the fade/zoom. Fixed by having `start_animation()`
+   inherit the currently-running action (and resume position/opacity from
+   wherever the tween currently is, not restart) whenever an *unlabeled*
+   resize() call arrives mid-OPEN/TAG, and `tagin()` skips relabeling
+   `pending_action` at all when a client is already mid-OPEN. MOVE/TAG
+   tweens are position/clip-only, not a true buffer rescale (a deliberate
+   v1 simplification, unlike OPEN/CLOSE's "zoom", which does rescale via
+   `wlr_scene_buffer_set_dest_size` off the buffer's own immutable pixel
+   size) -- only matters if a relayout also changes a tiled client's size
+   mid-tween (e.g. `setmfact`), where it'll crop rather than scale.
+
+   Verified: clean build (`-Wpedantic -Wall -Wextra
+   -Wdeclaration-after-statement -Wshadow -Wfloat-conversion`, no new
+   warnings).
+
+   **Two real bugs found and fixed in the real running session (2026-08-14),
+   not just by inspection** -- the "not yet verified: a live visual pass"
+   line above turned out to matter:
+
+   - **A window that redraws often (live output, this very terminal) got
+     permanently stuck mid-fade/mid-move, not just briefly.** Root cause:
+     `commitnotify()` (pre-existing upstream dwl code, unrelated to
+     animations) calls `resize(c, c->geom, ...)` on *every* surface
+     commit, not just real relayouts. Each one reached `start_animation()`
+     and reset `time_started`, even when the target hadn't actually
+     changed -- for a client committing faster than its own animation's
+     duration (200ms), the tween's progress could never reach `p >= 1.0`,
+     leaving it visibly stuck indefinitely. Fixed: `start_animation()` now
+     only (re)arms when the target genuinely differs from where the
+     client already is (idle) or is already animating toward (running);
+     an *unlabeled* call (no explicit OPEN/TAG `pending_action`) with an
+     unchanged target is now a no-op, letting any in-progress tween finish
+     undisturbed.
+   - **The same stuck-fade symptom, but *only* at a fractional output
+     scale (confirmed live: broken at 1.25, clean at 1.00)** -- a second,
+     independent bug, not a symptom of the first. `scale_buffer_iter()`'s
+     "zoom" rescale computed `wlr_scene_buffer_set_dest_size()`'s target
+     from `buffer->buffer->width/height` (the surface's *physical* pixel
+     size -- `buffer_scale` times logical size on any HiDPI/fractional
+     output) but `set_dest_size()` takes *logical* scene-graph units, same
+     as everything else in this file. At scale 1.0 physical and logical
+     coincide, so the bug was invisible; at 1.25 the buffer got rendered
+     far too large for its clipped region, showing as garbled/overlapping
+     text. Fixed: reads `wlr_surface_state.current.width/height` (via
+     `wlr_scene_surface_try_from_buffer()`) instead -- wlroots' own
+     already-scale-correct logical size -- falling back to
+     `buffer->buffer->width/height` only for a non-surface-backed buffer
+     (e.g. a single-pixel buffer), where the distinction doesn't apply.
+
+   Both confirmed via a nested test session reproducing the exact
+   conditions (a continuously-redrawing client, and separately `wasp.
+   monitors`' `scale = 1.25`) after the live session itself first
+   surfaced them -- screenshots before/after each fix, not just re-reading
+   the code.
+
+   **Two more real bugs, same day, same root pattern** -- an unlabeled
+   (`commitnotify()`-driven) `resize()` call redirecting an in-progress
+   animation that `start_animation()` didn't know how to leave alone:
+
+   - **A window that was supposed to zoom in from a small box instead
+     rendered corrupted/stretched** when a *third* window arrived while
+     it was still mid-OPEN and got immediately re-tiled into a
+     disproportionately different slot (e.g. going from a tall column to
+     a short quarter-tile). Root cause: `scale_buffer_iter()` used one
+     shared scale factor for both width and height, which is only correct
+     when the tween's box keeps a constant aspect ratio -- true for a
+     symmetric "zoom" OPEN/CLOSE targeting its own final box, false once
+     that target itself changes shape mid-tween via the "resuming" path
+     above. Fixed: separate `scale_x`/`scale_y` in `wasp_buf_ctx`, each
+     axis computed against its own target dimension. Confirmed against
+     MangoWC's own `BufferData` (`width_scale`/`height_scale` as separate
+     fields, and also reading `surface->current.width/height` the same
+     way) -- this wasn't a guess, its reference implementation does
+     exactly this for exactly this reason.
+   - **Windows visually stayed on screen across a tag switch they were
+     never tagged onto -- not the client's actual tags changing, its
+     on-screen presence following the user regardless** (reported live,
+     2026-08-14, initially described as "windows follow you between
+     workspaces," clarified to "their *visualization* follows," which is
+     the precise symptom). Root cause: `tagout()` (arrange(), see its own
+     comment) deliberately never touches `c->geom` -- it stays the real,
+     restorable position on purpose, driving the off-screen slide via a
+     separate `c->anim.target` instead. But `start_animation()` (called
+     from `resize()`, including `commitnotify()`'s frequent unlabeled
+     calls) unconditionally sets `c->anim.target = c->geom` whenever it
+     (re)arms -- so a stray commit mid-tag-out redirected the animation
+     *back onto the visible on-screen box*, aborting the slide-out
+     entirely and leaving the window incorrectly visible (`node.enabled`
+     never got a chance to be disabled, since the tween never reached its
+     off-screen target to trigger that). Fixed: `start_animation()` now
+     returns immediately, before touching anything, for any unlabeled
+     call arriving while `c->anim.tag_hide_after` is set -- the tag-out
+     tween is left completely undisturbed until it either finishes
+     (hiding the node) or a real `tagin()` reverses it.
+
+   Confirmed live (2026-08-14) after installing `wlrctl` (virtual-keyboard
+   protocol, lets a script send real keypresses into a nested test
+   session -- no more guessing from code review alone): tag switching
+   itself was fixed by the above. But two more real bugs surfaced right
+   after, same day, both specific to *floating* clients (a named
+   scratchpad, `wasp.scratchpad`) -- confirmed live first (typed `htop`
+   into a scratchpad that was supposedly hidden, watched it actually
+   run), then reproduced and fixed in the same nested-plus-`wlrctl`
+   harness before ever touching the real session again:
+
+   - **A named scratchpad, once hidden, stayed fully visible *and
+     interactive* forever** (not just visually stuck -- accepted
+     keyboard input, ran `htop` in it while "hidden"). Root cause: the
+     `tag_hide_after` guard added above was itself gated on the wrong
+     signal. `resize()`'s own `interact` parameter is *also* set by
+     `commitnotify()` for every floating client (`c->isfloating &&
+     !c->isfullscreen`), for an unrelated reason (which bounding box to
+     clamp against) -- gating the guard on `!interact` meant it silently
+     never applied to *any* floating client, since every one of its
+     commits looked "interactive." A tiled window's commits pass
+     `interact=0`, which is why plain tag-switching (tiled windows) had
+     already tested clean. Fixed: gate on `c == grabc` (the client
+     actually mid-interactive-drag) instead -- `moveresizekb()` (a
+     discrete keypress, no continuous grab of its own) now briefly
+     stands in as `grabc` around its own `resize()` call so it keeps
+     behaving the same (instant, no animation) as before.
+   - **A scratchpad's own OPEN animation rendered as a tiny, wrongly-
+     proportioned blob of content inside an already-full-size border**
+     (worse at output scale 1.25 than 1.0, but present at both --
+     confirmed by testing with `wasp.animations.enable = false`, which
+     showed neither). Root cause, found via one more debug-logged nested
+     run: for the brief window between `applyrules()`/`setmon()` setting
+     a freshly-spawned scratchpad's tags and `mapnotify()`'s own
+     scratchpad-claim block (further down) actually calling
+     `setfloating(c, 1)`, the client's `isfloating` flag was still
+     false -- so `arrange()`'s `tile()` pass caught it as an ordinary
+     tiled client and resized it to fill the *entire monitor*, a third,
+     wildly wrong target sandwiched between the client's own natural
+     size and the real scratchpad box. Always instant/invisible without
+     animations; with them, that wrong target corrupted the OPEN tween's
+     start box via the "resuming" retarget path. Fixed: mark `isfloating
+     = 1` as soon as the pending-scratchpad match is detected, *before*
+     `applyrules()`/`setmon()` ever run, so `tile()` never gets the
+     chance to claim it.
+
+   **Two more, same investigation, chased to a clean fix instead of left
+   as residual** (Daniel measured the leftover overflow precisely --
+   pixel-counted it at exactly ~25%, matching the configured 1.25 output
+   scale, which is what pointed at both of these):
+
+   - **Content still bled past the border on a client's very first ever
+     open** (any window, not scratchpad-specific -- confirmed both, and
+     confirmed absent at output scale 1.0). Root cause, this time really
+     about fractional-scale negotiation timing, not a wasp logic bug per
+     se: `open_animation_from()`'s start box got computed once, then
+     carried forward through every subsequent synchronous retarget within
+     the same `mapnotify()` call chain (the "resuming" path) -- but a
+     freshly mapped client's *correctly* fractional-scale-negotiated
+     frame can commit slightly after wasp has already computed that start
+     box against an earlier, not-yet-negotiated one. Fixed by porting
+     MangoWC's own solution for the identical problem
+     (`is_pending_open_animation`, confirmed by reading its `resize()`):
+     added `wasp_animation.open_pending`, set once in `mapnotify()`,
+     *recomputing* `open_animation_from()` fresh on every OPEN arm while
+     it's set, only "locking in" on this tween's first real
+     `animate_client()` tick (not on completion -- MangoWC clears its
+     own flag at the same point, right when real per-frame ticking
+     begins, for the same reason).
+   - **The above fix alone wasn't enough** -- pixel-measured proof: early
+     frames matched perfectly (ratio 1.000), but by the animation's own
+     end the *exact same* ~25% overflow came back and stayed. Root cause:
+     `unscale_buffer_iter()` reset a completed OPEN's buffer to `(0,0)`
+     ("use the buffer's own natural size") on the assumption that was
+     always correct once the tween was done -- but if the client's
+     `buffer_scale` still doesn't match the output's fractional scale by
+     then (seemingly the case throughout this nested test session, not
+     just transiently), "natural size" itself is wrong, and resetting to
+     it undid the correct explicit size the animation had been forcing
+     the whole time. Fixed: removed `unscale_buffer_iter()` entirely --
+     `scale_buffer_iter()` no longer skips the `dest_size` call at
+     scale 1.0 (that skip was the other half of the same wrong
+     assumption), and OPEN's completion now calls it one more time with
+     `scale_x = scale_y = 1.0` against the tween's own known-correct
+     target content size, *locking in* an explicit correct size rather
+     than trusting the client to already have one. Pixel-verified after
+     this fix: ratio 1.000 on every single frame, start to finish,
+     including well after completion.
+
+   **One more, found by re-reading the finished code before proposing a
+   PR, not by live testing** (2026-08-14): `type_open = "none"` was
+   documented as skipping the OPEN tween entirely (same meaning as
+   `type_close = "none"`, which really does), but
+   `open_animation_from()` only ever branched on `"zoom"` vs
+   anything-else, so `"none"` silently behaved exactly like `"fade"`.
+   Fixed in `anim_duration()`: forces `duration = 0` for `AnimOpen` when
+   `animtype_open` is `"none"`, reusing the existing `!dur` instant-apply
+   path (the same path `enable = false` already goes through) rather
+   than adding a new one. Verified nested: first-frame capture right
+   after spawn already shows the client at its final tiled geometry, no
+   growth transient, and `type_close = "zoom"` closing the same session
+   still tweens normally (no regression from the `AnimOpen`-only change).
 
 Two more added 2026-08-12 (not yet ordered relative to the three above):
 

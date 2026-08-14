@@ -14,7 +14,7 @@ wasp keeps dwl's own goals — small, hackable, few dependencies, suckless
 in spirit — and pulls in a handful of [dwl-patches] adapted to fit this
 model rather than `config.h` + recompile.
 
-## Status (2026-08-13)
+## Status (2026-08-14)
 
 Most of the day-to-day compositor is Lua-driven now. What's actually
 working:
@@ -52,7 +52,8 @@ working:
   an array of argv arrays, fork+exec'd once at startup (no shell), killed
   cleanly on exit.
 - **Hot-reload**: a bound key (`mod+shift+r` by default) re-reads
-  `config.lua` and re-applies gaps, the bar (visibility/position/colors),
+  `config.lua` and re-applies gaps, `wasp.animations` (including
+  re-baking its easing curves), the bar (visibility/position/colors),
   every window's border color, the background, keyboard layout/repeat
   speed, and keybindings themselves — all live, no restart. Border
   *width* on already-open windows and `wasp.autostart` still need one
@@ -91,6 +92,15 @@ working:
   (installed to `/etc/xdg-desktop-portal/`) picks `gtk` for
   FileChooser/Settings/Notification and `wlr` for ScreenCast/Screenshot —
   see Building below for the packages that back those.
+- **Animations**: `wasp.animations = { enable, duration_move, duration_open,
+  duration_close, duration_tag, type_open, type_close, zoom_ratio,
+  fade_from_opacity, tag_direction, curve_move, curve_open, curve_close,
+  curve_tag }` — MangoWC-style open/close/move/tag-switch tweening
+  (`"fade"`/`"zoom"`/`"none"`, cubic-bezier easing per action). `enable =
+  false` (the default) reproduces the original instant behavior
+  bit-for-bit; live on hot-reload, same as gaps. Not ported: layer-shell
+  (bar/panel) animation, per-window-rule overrides, `slide`-from-edge for
+  OPEN — see `NOTES.md` item 3 for the full scope note.
 
 Not done yet: mouse-drag resize variety and more border styles. The full
 running list, plus which [dwl-patches] are earmarked for which feature and

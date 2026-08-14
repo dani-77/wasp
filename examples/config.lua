@@ -2,10 +2,11 @@
 --   mkdir -p ~/.config/wasp && cp examples/config.lua ~/.config/wasp/config.lua
 --
 -- Appearance, terminal/menu, keybindings, keyboard, gaps, monitors/output
--- scale, autostart, named scratchpads, and window rules are all wired up
--- here -- and your workspaces show up in any ext-workspace-v1-aware bar/
--- shell for free, no config needed for that part. See NOTES.md for what's
--- still coming (animations, rounded corners/blur).
+-- scale, autostart, named scratchpads, window rules, and open/close/move/
+-- tag-switch animations are all wired up here -- and your workspaces show
+-- up in any ext-workspace-v1-aware bar/shell for free, no config needed
+-- for that part. See NOTES.md for what's still coming (rounded
+-- corners/blur).
 
 wasp = {}
 
@@ -25,6 +26,35 @@ wasp.gaps = {
   inner = 0,
   outer = 0,
   smart = false,
+}
+
+-- MangoWC-style window animations -- open/close/move/tag-switch tweening
+-- on top of the wlr_scene graph (see NOTES.md item 3). `enable = false`
+-- (the default) reproduces the original instant behavior bit-for-bit --
+-- nothing else below matters until it's true. Durations are milliseconds.
+-- `type_open`/`type_close`: "fade" (opacity only), "zoom" (shrink/grow
+-- around center by `zoom_ratio`, also fades), or "none". `tag_direction`
+-- is which monitor edge tag-switches slide to/from (same edge both ways):
+-- "left" | "right" | "top" | "bottom". The curve_* fields are CSS
+-- cubic-bezier()-style control points {x1, y1, x2, y2} (endpoints pinned
+-- at (0,0)/(1,1)) -- see e.g. https://cubic-bezier.com to pick one; all
+-- four default to the same gentle ease-out curve. Picked up live on
+-- hot-reload (mod+shift+r), same as gaps -- no restart needed.
+wasp.animations = {
+  enable = false,
+  duration_move = 200,
+  duration_open = 200,
+  duration_close = 150,
+  duration_tag = 200,
+  type_open = "zoom",
+  type_close = "zoom",
+  zoom_ratio = 0.8,
+  fade_from_opacity = 0.0,
+  tag_direction = "right",
+  curve_move  = { 0.25, 0.1, 0.25, 1.0 },
+  curve_open  = { 0.25, 0.1, 0.25, 1.0 },
+  curve_close = { 0.25, 0.1, 0.25, 1.0 },
+  curve_tag   = { 0.25, 0.1, 0.25, 1.0 },
 }
 
 -- Per-output rules -- mfact/nmaster/layout starting values, output scale,
@@ -299,7 +329,8 @@ bind({ "mod", "shift" }, "parenright",  "tag",  { tag = "all" })
 bind({ "mod", "shift" }, "c", "killclient")
 bind({ "mod", "shift" }, "q", "quit")
 
--- Hot-reload -- re-reads this file and re-applies gaps, the bar's
+-- Hot-reload -- re-reads this file and re-applies gaps, wasp.animations
+-- (including re-baking the curve_* easing tables), the bar's
 -- visibility/position/colors, every window's border color, the
 -- background, keyboard layout/repeat speed, wasp.monitors' `scale` (only
 -- that one field -- mfact/nmaster/layout/transform/x/y stay startup-time

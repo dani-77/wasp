@@ -103,6 +103,11 @@
 /* enums */
 enum { SchemeNorm, SchemeSel, SchemeUrg }; /* color schemes */
 enum { CurNormal, CurPressed, CurMove, CurResize }; /* cursor */
+/* wasp: animations (wasp.animations, see NOTES.md item 3, luaconfig.h) --
+ * which kind of tween a Client.anim (or a ClosingClient) is currently
+ * running. AnimNone means "not animating, geometry applied instantly" --
+ * the default whenever wasp.animations.enable is false. */
+enum { AnimNone, AnimOpen, AnimClose, AnimMove, AnimTag };
 enum { XDGShell, LayerShell, X11 }; /* client types */
 enum { LyrBg, LyrBottom, LyrTile, LyrFloat, LyrTop, LyrFS, LyrOverlay, LyrBlock, NUM_LAYERS }; /* scene layers */
 enum { ClkTagBar, ClkLtSymbol, ClkStatus, ClkTitle, ClkClient, ClkRoot }; /* clicks */
@@ -118,6 +123,45 @@ typedef struct {
 	const Arg arg;
 } Button;
 
+/* wasp: per-client animation state, embedded by value in Client below.
+ * pending_action is a one-shot flag set before the *next* resize() call so
+ * that call knows to treat it as an OPEN or TAG tween rather than a plain
+ * MOVE -- self-clearing, consumed by start_animation() (see mapnotify()/
+ * tagin() for where it's set). tag_hide_after marks a TAG-out tween: the
+ * scene node stays enabled (still visibly sliding away) for the whole
+ * tween and is only disabled once it completes -- see animate_client(). */
+struct wasp_animation {
+	int action, pending_action, running, tag_hide_after;
+	uint32_t time_started, duration; /* ms, CLOCK_MONOTONIC */
+	struct wlr_box initial, target, current;
+	float opacity_from, opacity_to; /* AnimOpen fade only */
+	float opacity_now; /* last opacity actually applied -- the resume point
+	                     * if a still-running OPEN gets retargeted, same
+	                     * role `current` plays for position; without this,
+	                     * retargeting (e.g. tile() correcting another
+	                     * client's slot right after this one mapped, which
+	                     * resets time_started) would restart the fade from
+	                     * opacity_from instead of resuming, visibly
+	                     * flashing back down first. */
+	int open_pending; /* set once in mapnotify(), cleared on this tween's
+	                    * first real animate_client() tick (matching
+	                    * MangoWC's own is_pending_open_animation) -- while
+	                    * true, every start_animation() OPEN arm
+	                    * *recomputes* open_animation_from() fresh against
+	                    * whatever c->geom currently is, rather than
+	                    * reusing a stale interpolated box from an earlier,
+	                    * possibly wrongly-scaled arm. Needed because a
+	                    * freshly mapped client can commit its first real,
+	                    * correctly fractional-scale-negotiated frame
+	                    * *after* wasp has already armed (and briefly
+	                    * ticked) the open tween against an earlier,
+	                    * not-yet-negotiated one -- confirmed live
+	                    * (2026-08-14): the zoomed-in content overflowed
+	                    * the border by ~25%, exactly the configured output
+	                    * scale, only on a client's very first ever open,
+	                    * self-correcting afterwards. */
+};
+
 typedef struct Monitor Monitor;
 typedef struct {
 	/* Must keep this field first */
@@ -132,6 +176,15 @@ typedef struct {
 	struct wlr_box geom; /* layout-relative, includes border */
 	struct wlr_box prev; /* layout-relative, includes border */
 	struct wlr_box bounds; /* only width and height are used */
+	/* wasp: animation state (wasp.animations) -- see start_animation()/
+	 * animate_client() in dwl.c. action/running/AnimNone when nothing is
+	 * animating (the default with wasp.animations.enable = false); target
+	 * is normally == geom, except during a TAG-out tween, where geom is
+	 * deliberately left as the real, restorable position and target holds
+	 * the off-screen box instead (see tagout()). current is both "where
+	 * this client visually is right now" and the resume point if a new
+	 * tween interrupts a running one (see start_animation()). */
+	struct wasp_animation anim;
 	union {
 		struct wlr_xdg_surface *xdg;
 		struct wlr_xwayland_surface *xwayland;
@@ -286,9 +339,49 @@ typedef struct {
 	struct wl_listener destroy;
 } SessionLock;
 
+/* wasp: a closing window's scene-graph snapshot (wasp.animations, CLOSE).
+ * The real Client is freed by unmapnotify()'s normal path immediately --
+ * there's nothing left on it to animate -- so a closing tween needs its
+ * own lightweight, self-contained copy of what was on screen. init_closing_client()
+ * builds one (snapshot_buffer_iter() clones each live wlr_scene_buffer),
+ * tick_closing_clients() ticks and self-destructs it. See NOTES.md item 3. */
+typedef struct {
+	struct wl_list link; /* closing_clients */
+	struct wlr_scene_tree *tree; /* detached clone, reparented into the live client's old layer */
+	struct wlr_box from, to;
+	uint32_t time_started, duration;
+} ClosingClient;
+
+/* wasp: cubic-bezier easing curve baked to a lookup table -- see ease() for
+ * why (the Bezier's x(t) isn't closed-form invertible). One table per
+ * AnimOpen/AnimClose/AnimMove/AnimTag action, indexed directly by that
+ * enum (index 0, AnimNone, is never used/baked). */
+#define ANIM_LUT_N 256
+struct wasp_curve {
+	float x[ANIM_LUT_N], y[ANIM_LUT_N];
+};
+
 /* function declarations */
 static void applybounds(Client *c, struct wlr_box *bbox);
 static void applyrules(Client *c);
+/* wasp: animations (wasp.animations, see NOTES.md item 3, luaconfig.h) */
+static uint32_t now_ms(void);
+static uint32_t anim_duration(int action);
+static void bake_curve(struct wasp_bezier bz, struct wasp_curve *out);
+static float ease(float p, int action);
+static struct wlr_box zoom_box(struct wlr_box b, float ratio);
+static struct wlr_box open_animation_from(Client *c);
+static struct wlr_box tag_edge_box(Monitor *m, struct wlr_box real);
+static void scale_buffer_iter(struct wlr_scene_buffer *buffer, int sx, int sy, void *data);
+static void apply_client_geom(Client *c, struct wlr_box vis);
+static void start_animation(Client *c);
+static void reschedule_all_outputs(void);
+static int animate_client(Client *c);
+static void tagin(Client *c, Monitor *m);
+static void tagout(Client *c, Monitor *m);
+static void snapshot_buffer_iter(struct wlr_scene_buffer *buffer, int sx, int sy, void *data);
+static void init_closing_client(Client *c);
+static int tick_closing_clients(void);
 static void arrange(Monitor *m);
 static void arrangelayer(Monitor *m, struct wl_list *list,
 		struct wlr_box *usable_area, int exclusive);
@@ -453,6 +546,19 @@ static struct wlr_xdg_activation_v1 *activation;
 static struct wlr_xdg_decoration_manager_v1 *xdg_decoration_mgr;
 static struct wl_list clients; /* tiling order */
 static struct wl_list fstack;  /* focus order */
+static struct wl_list closing_clients; /* wasp: ClosingClient.link, see NOTES.md item 3 */
+static struct wasp_curve animcurve[5]; /* wasp: indexed by AnimOpen/AnimClose/AnimMove/AnimTag, see init_anim_curves() */
+/* wasp: last time rendermon() actually ticked animations, and a floor on
+ * how often it will again (~120Hz) -- belt-and-braces against a runaway
+ * reschedule_all_outputs()/frame-event loop on backends that don't pace
+ * wlr_output_schedule_frame() to real vsync as tightly as DRM/KMS does
+ * (observed under WLR_BACKENDS=wayland while testing this: tens of
+ * thousands of ticks/sec, ~90%+ CPU, though the animation itself still
+ * completed correctly since progress is wall-clock- not tick-count-based
+ * -- see NOTES.md item 3). A no-op in practice on a real DRM session,
+ * where natural vsync already keeps ticks well under this rate. */
+#define ANIM_TICK_MIN_MS 8
+static uint32_t last_anim_tick_ms;
 static struct wlr_idle_notifier_v1 *idle_notifier;
 static struct wlr_idle_inhibit_manager_v1 *idle_inhibit_mgr;
 static struct wlr_layer_shell_v1 *layer_shell;
@@ -679,6 +785,674 @@ applyrules(Client *c)
 		resize(c, centeredgeom(c->mon, c->geom.width, c->geom.height), 0);
 }
 
+/* wasp: animations (wasp.animations -- see NOTES.md item 3, luaconfig.h/.c
+ * for the config side). MangoWC (mangowm/mango) is the reference
+ * implementation this is modeled on: a wl_output frame-listener-driven
+ * tween (see rendermon()) rather than a separate timer, cubic-bezier
+ * easing baked to a lookup table, and -- for CLOSE, since the real Client
+ * is freed synchronously on unmap -- a detached scene-graph snapshot that
+ * outlives it just long enough to animate out (ClosingClient, above). */
+
+static uint32_t
+now_ms(void)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+}
+
+static uint32_t
+anim_duration(int action)
+{
+	switch (action) {
+	/* type_open = "none" forces duration 0 here -- start_animation()'s
+	 * existing !dur check already applies instantly in that case, same
+	 * as animations_enable=false, so "none" genuinely skips the OPEN
+	 * tween entirely (not just the zoom, still fading, which "none" and
+	 * "fade" used to do identically -- open_animation_from() only ever
+	 * branched on "zoom" vs anything-else). Matches type_close's own
+	 * "none" (checked directly in init_closing_client()) for the same
+	 * user-facing meaning on both sides. */
+	case AnimOpen:  return strcmp(animtype_open, "none") ? animdur_open : 0;
+	case AnimClose: return animdur_close;
+	case AnimTag:   return animdur_tag;
+	case AnimMove:  return animdur_move;
+	default:        return 0;
+	}
+}
+
+/* Bakes a cubic Bezier (x1,y1,x2,y2), endpoints pinned at (0,0)/(1,1) --
+ * the same CSS cubic-bezier() convention MangoWC uses -- to ANIM_LUT_N
+ * samples. x(t)/y(t) both come from the same parametric curve; ease()
+ * below binary-searches the baked .x values to answer "what's y for this
+ * x" (t, in [0,1]), since the Bezier isn't solvable for y(x) directly. */
+static void
+bake_curve(struct wasp_bezier bz, struct wasp_curve *out)
+{
+	int i;
+
+	for (i = 0; i < ANIM_LUT_N; i++) {
+		float t = (float)i / (float)(ANIM_LUT_N - 1);
+		float mt = 1.0f - t;
+		out->x[i] = 3*t*mt*mt*bz.x1 + 3*t*t*mt*bz.x2 + t*t*t;
+		out->y[i] = 3*t*mt*mt*bz.y1 + 3*t*t*mt*bz.y2 + t*t*t;
+	}
+}
+
+/* Called by luaconfig.c's load_animations() (declared in luaconfig.h)
+ * every time wasp.animations is (re)loaded, including once unconditionally
+ * from set_defaults() -- ease() below always needs a valid baked table,
+ * even before/without a config.lua. */
+void
+init_anim_curves(void)
+{
+	bake_curve(animbz_open,  &animcurve[AnimOpen]);
+	bake_curve(animbz_close, &animcurve[AnimClose]);
+	bake_curve(animbz_move,  &animcurve[AnimMove]);
+	bake_curve(animbz_tag,   &animcurve[AnimTag]);
+}
+
+/* p: linear progress in [0,1]. Returns the eased progress for the given
+ * action's baked curve, also clamped to [0,1]. */
+static float
+ease(float p, int action)
+{
+	struct wasp_curve *curve;
+	int lo, hi, mid;
+
+	if (action < AnimOpen || action > AnimTag)
+		return p;
+	if (p <= 0.0f)
+		return 0.0f;
+	if (p >= 1.0f)
+		return 1.0f;
+
+	curve = &animcurve[action];
+	lo = 0;
+	hi = ANIM_LUT_N - 1;
+	while (hi - lo > 1) {
+		mid = (lo + hi) / 2;
+		if (curve->x[mid] <= p)
+			lo = mid;
+		else
+			hi = mid;
+	}
+	return curve->y[hi];
+}
+
+/* Shrinks b around its own center by ratio -- shared by OPEN/CLOSE's
+ * "zoom" type. */
+static struct wlr_box
+zoom_box(struct wlr_box b, float ratio)
+{
+	struct wlr_box z = b;
+	z.width = MAX(1, (int)(b.width * ratio));
+	z.height = MAX(1, (int)(b.height * ratio));
+	z.x = b.x + (b.width - z.width) / 2;
+	z.y = b.y + (b.height - z.height) / 2;
+	return z;
+}
+
+/* The box an OPEN tween starts from -- "fade": geometry unchanged (opacity-
+ * only tween); "zoom": shrunk around center by animzoom_ratio. ("none" is
+ * gated out by its caller before this is ever reached, see
+ * start_animation().) */
+static struct wlr_box
+open_animation_from(Client *c)
+{
+	if (!strcmp(animtype_open, "zoom"))
+		return zoom_box(c->geom, animzoom_ratio);
+	return c->geom;
+}
+
+/* Returns `real` translated to just outside whichever monitor edge
+ * animtag_direction names -- a TAG tween's off-screen initial (tag-in) or
+ * target (tag-out).
+ * Deliberately not applybounds() -- that clamps a box back onto the
+ * monitor, the opposite of what an off-screen box needs. */
+static struct wlr_box
+tag_edge_box(Monitor *m, struct wlr_box real)
+{
+	struct wlr_box b = real;
+
+	if (!strcmp(animtag_direction, "left"))
+		b.x = m->m.x - real.width;
+	else if (!strcmp(animtag_direction, "top"))
+		b.y = m->m.y - real.height;
+	else if (!strcmp(animtag_direction, "bottom"))
+		b.y = m->m.y + m->m.height;
+	else /* "right", default */
+		b.x = m->m.x + m->m.width;
+	return b;
+}
+
+/* Shared wlr_scene_node_for_each_buffer() iterator, used both for a live
+ * client's own scene_surface (OPEN tween) and a ClosingClient's detached
+ * snapshot tree (CLOSE tween). scale_x == scale_y == 1.0f skips the
+ * resize call -- MOVE/TAG never change size (see apply_client_geom()'s
+ * clip-only approach below) and never go through this at all, so this
+ * only ever actually rescales for a "zoom" OPEN/CLOSE.
+ *
+ * Separate x/y factors, not one shared scale -- confirmed the hard way
+ * (2026-08-14): a single factor applied to both axes is only right when
+ * the tween's box keeps the same aspect ratio throughout, which a zoom
+ * toward/from a disproportionately different final tiled slot (e.g. a
+ * window that only *just* opened getting immediately re-tiled into a
+ * differently-shaped slot by a third window arriving, still mid-zoom --
+ * see start_animation()'s "resuming" note) does not; a single ratio
+ * stretched the wrong axis, corrupting the image.
+ *
+ * wlr_scene_buffer_set_dest_size() takes *scene-graph* (logical) units,
+ * not raw buffer pixels -- also confirmed the hard way: scaling from
+ * buffer->buffer->width/height (the surface's *physical* pixel size,
+ * which is buffer_scale times the logical size on any HiDPI/fractional-
+ * scale output) instead of the logical size corrupted rendering entirely
+ * at fractional output scale, while looking fine at scale 1.0, where
+ * physical and logical happen to coincide and the bug is invisible.
+ * wlr_surface_state.current.width/height (reached via
+ * wlr_scene_surface_try_from_buffer()) is the correct,
+ * buffer_scale-independent logical size wlroots itself uses -- but only
+ * once the client has actually caught up and committed a buffer at (close
+ * to) its target size. For OPEN specifically, that hasn't happened yet on
+ * the earliest ticks: resize()'s real head already requested the target
+ * size via client_set_size(), but current.width/height still reflects
+ * whatever the client had committed *before* that (its own default
+ * window size, e.g. a scratchpad's target being much larger than
+ * alacritty's own default). Scaling from that stale, too-small size
+ * shrank the content into a tiny corner of an already-full-size border
+ * for as long as the client took to catch up -- confirmed live (2026-08-14,
+ * a named scratchpad specifically): imperceptibly brief at output scale
+ * 1.0 (client catches up almost immediately), clearly visible at 1.25
+ * (the extra buffer_scale/fractional-scale negotiation round-trip before
+ * the client's *correctly sized* buffer lands takes measurably longer).
+ * ref_w/ref_h (when non-zero) sidestep this entirely: the caller passes
+ * the tween's own already-known-correct target content size instead of
+ * asking each buffer for its (possibly still-stale) current size, so the
+ * "zoom" is always proportional to where the animation is *actually*
+ * headed, buffer catch-up or not. 0,0 falls back to the natural
+ * per-buffer size (used for CLOSE, snapshotting an already fully-settled,
+ * already-correct live frame, where this staleness problem can't occur in
+ * the first place) or a non-surface-backed buffer (e.g. a single-pixel
+ * buffer, where physical/logical doesn't meaningfully differ anyway). */
+struct wasp_buf_ctx { float scale_x, scale_y, opacity; int ref_w, ref_h; };
+
+static void
+scale_buffer_iter(struct wlr_scene_buffer *buffer, int sx, int sy, void *data)
+{
+	struct wasp_buf_ctx *ctx = data;
+	struct wlr_scene_surface *ss;
+	int nat_w, nat_h;
+
+	if (!buffer->buffer)
+		return;
+	/* Always set dest_size explicitly, even for scale_x == scale_y ==
+	 * 1.0f (previously skipped as "already natural size, don't touch") --
+	 * confirmed the hard way (2026-08-14): resetting to (0,0)/"auto" at
+	 * OPEN completion (see below) let a client whose buffer_scale hadn't
+	 * (yet, or ever, in one nested test) caught up to the output's
+	 * fractional scale render at its own natural-but-wrongly-scaled size
+	 * again, undoing the correct explicit size the tween had been
+	 * forcing throughout -- looked perfect for several frames, then
+	 * visibly overflowed the border by ~25% (the configured 1.25 output
+	 * scale, exactly) right as the animation finished and "let go." */
+	if (ctx->ref_w && ctx->ref_h) {
+		nat_w = ctx->ref_w;
+		nat_h = ctx->ref_h;
+	} else if ((ss = wlr_scene_surface_try_from_buffer(buffer))) {
+		nat_w = ss->surface->current.width;
+		nat_h = ss->surface->current.height;
+	} else {
+		nat_w = buffer->buffer->width;
+		nat_h = buffer->buffer->height;
+	}
+	wlr_scene_buffer_set_dest_size(buffer,
+			MAX(1, (int)(nat_w * ctx->scale_x)),
+			MAX(1, (int)(nat_h * ctx->scale_y)));
+	wlr_scene_buffer_set_opacity(buffer, ctx->opacity);
+}
+
+/* The scene-graph-writing tail of what resize() used to do unconditionally
+ * -- generalized to an arbitrary (possibly mid-tween, interpolated) box
+ * instead of always c->geom, so both the instant path and every animation
+ * tick share one implementation. Position/size only -- no buffer rescale
+ * here, just the plain, unclamped clip client_get_clip() itself already
+ * always returned (same as upstream dwl's own resize() always used) --
+ * NOT reclamped to vis's shrinking size. That reclamp was tried in an
+ * earlier version of this code and was a real bug, not a cosmetic
+ * simplification: client_get_clip()'s x/y come from the client's own
+ * *committed* xdg_surface geometry, which mid-tween (before the client
+ * has actually redrawn/recommitted at the new size following the one
+ * real client_set_size() resize() already issued) can legitimately still
+ * be the *previous* frame's -- clamping the clip's width/height to vis
+ * while leaving that now-stale x/y untouched cropped a moving window into
+ * a mismatched sliver of its own old content (looked like truncated/
+ * ghosted text, not a clean shrink). A shrunk-looking MOVE/TAG tween box
+ * (or a still-zooming OPEN one, before scale_buffer_iter's real
+ * wlr_scene_buffer_set_dest_size rescale below catches up) may overflow
+ * its own border rect for a frame or two instead -- much less jarring
+ * than the truncation bug, and self-corrects within the tween's own
+ * duration either way. */
+static void
+apply_client_geom(Client *c, struct wlr_box vis)
+{
+	struct wlr_box clip;
+
+	wlr_scene_node_set_position(&c->scene->node, vis.x, vis.y);
+	wlr_scene_node_set_position(&c->scene_surface->node, c->bw, c->bw);
+	wlr_scene_rect_set_size(c->border[0], vis.width, c->bw);
+	wlr_scene_rect_set_size(c->border[1], vis.width, c->bw);
+	wlr_scene_rect_set_size(c->border[2], c->bw, vis.height - 2 * c->bw);
+	wlr_scene_rect_set_size(c->border[3], c->bw, vis.height - 2 * c->bw);
+	wlr_scene_node_set_position(&c->border[1]->node, 0, vis.height - c->bw);
+	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
+	wlr_scene_node_set_position(&c->border[3]->node, vis.width - c->bw, c->bw);
+
+	client_get_clip(c, &clip);
+	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
+}
+
+/* Called from resize() once its real head (bounds/geom/applybounds/
+ * client_set_size, i.e. everything that talks to the client's own
+ * protocol object) is done -- decides whether this relayout is applied
+ * instantly (animations off, an interactive drag/keyboard-nudge, or a
+ * zero duration) or animated, and arms/updates c->anim accordingly.
+ * pending_action is a one-shot flag set by mapnotify()/tagin() *before*
+ * this resize() call, so it's consumed (and cleared) here regardless of
+ * which branch runs. */
+static void
+start_animation(Client *c)
+{
+	int had_pending = c->anim.pending_action != AnimNone;
+	int action = c->anim.pending_action;
+	int resuming;
+	uint32_t dur;
+
+	c->anim.pending_action = AnimNone;
+
+	/* commitnotify() (pre-existing upstream dwl code, unrelated to
+	 * animations) calls resize(c, c->geom, ...) on *every* surface
+	 * commit, not just real relayouts -- for a client that redraws often
+	 * (a terminal with live output, cursor blink, anything actually
+	 * updating, this Claude Code terminal included), most of those calls
+	 * carry a target identical to where this client already is, or is
+	 * already animating toward. Without this check, each one would still
+	 * fall through and (re)arm below, resetting time_started every time
+	 * -- so a client committing faster than its own animation's duration
+	 * could never actually reach the tween's own p >= 1.0, leaving it
+	 * visibly stuck mid-fade/mid-move *indefinitely*, not just briefly.
+	 * Only for an *unlabeled* call (no explicit OPEN/TAG pending_action)
+	 * whose target genuinely hasn't changed -- a real OPEN/TAG trigger, or
+	 * an actual relayout to a new box, still always (re)arms below, same
+	 * as before.
+	 *
+	 * Gated on c != grabc (the client actually being interactively
+	 * dragged/resized right now), not on `interact` -- confirmed the hard
+	 * way (2026-08-14): commitnotify() itself passes
+	 * `interact = c->isfloating && !c->isfullscreen` on *every* commit,
+	 * unrelated to any real drag (it only picks resize()'s own bounding
+	 * box, sgeom vs the monitor's usable area) -- gating on `interact`
+	 * here meant this whole guard, and the tag_hide_after one right below
+	 * it, silently never applied to any floating client, since every one
+	 * of its commits looked like an "interactive" call. A named scratchpad
+	 * (always floating) hidden with `toggle-scratchpad` reproduced this
+	 * exactly: its own idle terminal's cursor-blink commit landed on the
+	 * unconditional instant-apply path below, right after tagout() armed
+	 * the hide, silently resetting running/tag_hide_after back to 0
+	 * *without* ever disabling the scene node -- the window stayed fully
+	 * visible and interactive (confirmed: typed into it, ran htop in it)
+	 * forever, with no further animation ticks to ever correct it. */
+	if (animations_enable && c != grabc && !had_pending) {
+		struct wlr_box *settled;
+
+		/* A client mid-TAG-out is a special case of the same problem:
+		 * tagout() (arrange()) deliberately never touches c->geom (it
+		 * stays the real, restorable position for whenever this tag is
+		 * visible again -- see tagout()'s own comment), so it never
+		 * equals c->anim.target (the off-screen box) while this is
+		 * running -- the general check below would never catch it. Without
+		 * this, a commitnotify()-driven resize() arriving mid-tag-out
+		 * would still fall through, and start_animation() unconditionally
+		 * setting c->anim.target = c->geom below would redirect the
+		 * animation *back onto the visible on-screen box*, aborting the
+		 * slide-out and leaving the window incorrectly visible on
+		 * whatever tag is now active -- confirmed live (2026-08-14): a
+		 * window's own *visual* presence following the user across tag
+		 * switches it was never tagged onto, not the window's actual tags
+		 * changing. */
+		if (c->anim.running && c->anim.tag_hide_after)
+			return;
+
+		settled = c->anim.running ? &c->anim.target : &c->anim.current;
+		if (settled->x == c->geom.x && settled->y == c->geom.y
+				&& settled->width == c->geom.width && settled->height == c->geom.height)
+			return;
+	}
+
+	resuming = c->anim.running
+			&& (c->anim.action == AnimOpen || c->anim.action == AnimTag);
+
+	/* A brand-new client's very first arrange() pass (its scene node
+	 * starts disabled, from mapnotify()) looks, from arrange()'s own
+	 * perspective, just like a tag-hidden client becoming visible again
+	 * -- so tile()/dwindle()/monocle()'s relayout pass (or tagin()'s own
+	 * direct call for a floating client) fires a *second*, unlabeled
+	 * resize() right after the one that armed the OPEN tween above, to
+	 * correct a client's placeholder placement into its real tiled slot.
+	 * An unlabeled resize() (no pending_action) arriving mid-OPEN/TAG
+	 * keeps that same action instead of falling back to a plain MOVE --
+	 * only the target retargets, so the fade/zoom/slide isn't silently
+	 * lost or restarted from scratch. */
+	if (!action)
+		action = resuming ? c->anim.action : AnimMove;
+	dur = anim_duration(action);
+
+	if (!animations_enable || c == grabc || !dur) {
+		c->anim.running = 0;
+		c->anim.tag_hide_after = 0;
+		c->anim.action = AnimNone;
+		c->anim.current = c->geom;
+		apply_client_geom(c, c->geom);
+		return;
+	}
+
+	if (action == AnimOpen)
+		c->anim.initial = (!c->anim.running || c->anim.open_pending)
+				? open_animation_from(c) : c->anim.current;
+	else if (action == AnimTag && !c->anim.running)
+		c->anim.initial = tag_edge_box(c->mon, c->geom);
+	else
+		c->anim.initial = c->anim.running ? c->anim.current : c->geom;
+
+	c->anim.target = c->geom;
+	c->anim.current = c->anim.initial;
+	c->anim.action = action;
+	c->anim.running = 1;
+	c->anim.tag_hide_after = 0;
+	c->anim.time_started = now_ms();
+	c->anim.duration = dur;
+	/* On a fresh OPEN, fade from the configured start. On a mid-tween
+	 * retarget (resuming) -- e.g. a tile() correction right after
+	 * mapnotify() armed this, which resets time_started just above and so
+	 * would otherwise restart the eased progress at 0 -- fade from
+	 * opacity_now (the last opacity actually applied) instead, exactly
+	 * like initial/current above do for position, so it resumes smoothly
+	 * instead of visibly snapping back down and re-fading. */
+	if (action == AnimOpen) {
+		c->anim.opacity_from = resuming ? c->anim.opacity_now : animfade_from_opacity;
+		c->anim.opacity_to = 1.0f;
+	}
+
+	apply_client_geom(c, c->anim.current);
+	if (action == AnimOpen) {
+		struct wasp_buf_ctx ctx;
+		ctx.scale_x = c->anim.target.width
+				? (float)c->anim.current.width / (float)c->anim.target.width : 1.0f;
+		ctx.scale_y = c->anim.target.height
+				? (float)c->anim.current.height / (float)c->anim.target.height : 1.0f;
+		ctx.opacity = c->anim.opacity_now = c->anim.opacity_from;
+		ctx.ref_w = c->anim.target.width - 2 * (int)c->bw;
+		ctx.ref_h = c->anim.target.height - 2 * (int)c->bw;
+		wlr_scene_node_for_each_buffer(&c->scene_surface->node, scale_buffer_iter, &ctx);
+	}
+	reschedule_all_outputs();
+}
+
+/* Re-arms every enabled output's frame event -- the self-sustaining loop
+ * that keeps rendermon() ticking animations every refresh for as long as
+ * something is actually animating (rendermon() itself decides that, from
+ * animate_client()/tick_closing_clients()'s own return values), and costs
+ * nothing once nothing is. */
+static void
+reschedule_all_outputs(void)
+{
+	Monitor *m;
+
+	wl_list_for_each(m, &mons, link) {
+		if (m->wlr_output->enabled)
+			wlr_output_schedule_frame(m->wlr_output);
+	}
+}
+
+/* One tick of a single client's tween -- lerps initial->target through
+ * ease(), applies it, and (for OPEN) the matching opacity/scale. Returns
+ * whether this client needs another frame. */
+static int
+animate_client(Client *c)
+{
+	uint32_t elapsed;
+	float p, e;
+	struct wlr_box vis;
+
+	if (!c->anim.running)
+		return 0;
+
+	/* This is a real tick (as opposed to the synchronous re-arms
+	 * start_animation() itself may have already done, back to back,
+	 * before rendermon() ever got a chance to call this) -- lock in
+	 * whatever open_animation_from() last computed instead of letting a
+	 * later arm keep recomputing it. See struct wasp_animation's own
+	 * comment on open_pending. */
+	c->anim.open_pending = 0;
+
+	elapsed = now_ms() - c->anim.time_started;
+	p = c->anim.duration ? (float)elapsed / (float)c->anim.duration : 1.0f;
+	if (p > 1.0f)
+		p = 1.0f;
+	e = ease(p, c->anim.action);
+
+	vis.x = c->anim.initial.x + (int)((c->anim.target.x - c->anim.initial.x) * e);
+	vis.y = c->anim.initial.y + (int)((c->anim.target.y - c->anim.initial.y) * e);
+	vis.width  = c->anim.initial.width  + (int)((c->anim.target.width  - c->anim.initial.width)  * e);
+	vis.height = c->anim.initial.height + (int)((c->anim.target.height - c->anim.initial.height) * e);
+	c->anim.current = vis;
+	apply_client_geom(c, vis);
+
+	if (c->anim.action == AnimOpen) {
+		struct wasp_buf_ctx ctx;
+		ctx.scale_x = c->anim.target.width ? (float)vis.width / (float)c->anim.target.width : 1.0f;
+		ctx.scale_y = c->anim.target.height ? (float)vis.height / (float)c->anim.target.height : 1.0f;
+		ctx.opacity = c->anim.opacity_now =
+				c->anim.opacity_from + (c->anim.opacity_to - c->anim.opacity_from) * e;
+		ctx.ref_w = c->anim.target.width - 2 * (int)c->bw;
+		ctx.ref_h = c->anim.target.height - 2 * (int)c->bw;
+		wlr_scene_node_for_each_buffer(&c->scene_surface->node, scale_buffer_iter, &ctx);
+	}
+
+	if (p < 1.0f)
+		return 1;
+
+	c->anim.running = 0;
+	if (c->anim.action == AnimOpen) {
+		/* Lock in the correct logical content size explicitly (scale
+		 * 1.0, but still an explicit dest_size -- see scale_buffer_iter()'s
+		 * own comment on why *not* resetting to "auto" here matters),
+		 * rather than leaving it for a client whose buffer_scale may
+		 * still not match the output's fractional scale to get wrong on
+		 * its own. */
+		struct wasp_buf_ctx ctx;
+		ctx.scale_x = ctx.scale_y = 1.0f;
+		ctx.opacity = 1.0f;
+		ctx.ref_w = c->anim.target.width - 2 * (int)c->bw;
+		ctx.ref_h = c->anim.target.height - 2 * (int)c->bw;
+		wlr_scene_node_for_each_buffer(&c->scene_surface->node, scale_buffer_iter, &ctx);
+	}
+	if (c->anim.tag_hide_after) {
+		wlr_scene_node_set_enabled(&c->scene->node, 0);
+		c->anim.tag_hide_after = 0;
+	}
+	c->anim.action = AnimNone;
+	return 0;
+}
+
+/* Called from arrange()'s per-client visibility pass for a client newly
+ * visible on the target tag (including the "reverses a still-running
+ * tag-out" case -- see arrange()). Doesn't arm c->anim itself: sets
+ * pending_action = AnimTag and lets the *next* resize() call (either
+ * tile()/dwindle()/monocle()'s own pass later in this same arrange() call,
+ * for a tiled client, or the explicit call below for one that isn't) pick
+ * it up via start_animation()'s AnimTag/!running case, which computes the
+ * actual off-screen starting box.
+ *
+ * A brand-new client's very first arrange() pass looks exactly like this
+ * same "becoming visible" case (its scene node also starts disabled, from
+ * mapnotify()) -- if it's already mid-OPEN (armed by mapnotify()'s own
+ * pending_action before this ever runs), leave pending_action alone so
+ * start_animation() keeps it OPEN instead of relabeling it TAG; enabling
+ * the node is still correct and necessary either way, just nothing further
+ * needs arming here. */
+static void
+tagin(Client *c, Monitor *m)
+{
+	wlr_scene_node_set_enabled(&c->scene->node, 1);
+	client_set_suspended(c, 0);
+	if (c->anim.running && c->anim.action == AnimOpen)
+		return;
+	c->anim.tag_hide_after = 0;
+	c->anim.pending_action = AnimTag;
+	if (c->isfloating || !m->lt[m->sellt]->arrange)
+		resize(c, c->geom, 0);
+}
+
+/* Called from arrange() for a client leaving visibility on this monitor.
+ * Unlike tagin(), arms c->anim directly -- tile()/dwindle()/monocle()
+ * never call resize() on a now-invisible client, so nothing else would
+ * ever start this tween. Deliberately leaves c->geom untouched (it's the
+ * real, restorable position for whenever this tag becomes visible again)
+ * and keeps the scene node *enabled* for the tween's whole duration --
+ * only animate_client()'s tag_hide_after completion handling actually
+ * disables it, which is what lets a rapid switch-away-then-back reverse
+ * smoothly instead of popping (see arrange()). */
+static void
+tagout(Client *c, Monitor *m)
+{
+	c->anim.initial = c->anim.running ? c->anim.current : c->geom;
+	c->anim.current = c->anim.initial;
+	c->anim.target = tag_edge_box(m, c->geom);
+	c->anim.action = AnimTag;
+	c->anim.pending_action = AnimNone;
+	c->anim.running = 1;
+	c->anim.tag_hide_after = 1;
+	c->anim.time_started = now_ms();
+	c->anim.duration = anim_duration(AnimTag);
+	client_set_suspended(c, 1);
+	reschedule_all_outputs();
+}
+
+/* wlr_scene_node_for_each_buffer() gives sx/sy in absolute layout
+ * coordinates -- ctx->ox/oy (the live client's own c->geom.x/y at
+ * snapshot time) turns that back into a position relative to the new
+ * detached tree, which is itself placed at that same layout position (see
+ * init_closing_client()). */
+struct snapshot_ctx { struct wlr_scene_tree *dst; int ox, oy; };
+
+static void
+snapshot_buffer_iter(struct wlr_scene_buffer *buffer, int sx, int sy, void *data)
+{
+	struct snapshot_ctx *ctx = data;
+	struct wlr_scene_buffer *clone;
+
+	if (!buffer->buffer)
+		return;
+	clone = wlr_scene_buffer_create(ctx->dst, buffer->buffer);
+	wlr_scene_node_set_position(&clone->node, sx - ctx->ox, sy - ctx->oy);
+	if (buffer->dst_width || buffer->dst_height)
+		wlr_scene_buffer_set_dest_size(clone, buffer->dst_width, buffer->dst_height);
+	wlr_scene_buffer_set_opacity(clone, buffer->opacity);
+}
+
+/* Snapshots c's live scene subtree (surface buffers + the 4 border rects)
+ * into a new detached ClosingClient just before unmapnotify() destroys
+ * the real one -- see NOTES.md item 3 for why a snapshot is needed at all
+ * (nothing else survives an unmap to animate). A no-op (ordinary instant
+ * destroy proceeds exactly as before) when animations/close animation are
+ * off, or the client wasn't even visible to begin with. */
+static void
+init_closing_client(Client *c)
+{
+	ClosingClient *cc;
+	struct snapshot_ctx ctx;
+	int i;
+
+	if (!animations_enable || !animdur_close || !strcmp(animtype_close, "none")
+			|| !c->mon || !VISIBLEON(c, c->mon))
+		return;
+
+	cc = ecalloc(1, sizeof(*cc));
+	cc->tree = wlr_scene_tree_create(c->scene->node.parent);
+	wlr_scene_node_set_position(&cc->tree->node, c->geom.x, c->geom.y);
+
+	ctx.dst = cc->tree;
+	ctx.ox = c->geom.x;
+	ctx.oy = c->geom.y;
+	wlr_scene_node_for_each_buffer(&c->scene_surface->node, snapshot_buffer_iter, &ctx);
+
+	for (i = 0; i < 4; i++) {
+		struct wlr_scene_rect *r = wlr_scene_rect_create(cc->tree,
+				c->border[i]->width, c->border[i]->height, c->border[i]->color);
+		wlr_scene_node_set_position(&r->node, c->border[i]->node.x, c->border[i]->node.y);
+	}
+
+	cc->from = c->geom;
+	cc->to = !strcmp(animtype_close, "zoom") ? zoom_box(c->geom, animzoom_ratio) : c->geom;
+	cc->time_started = now_ms();
+	cc->duration = animdur_close;
+	wl_list_insert(&closing_clients, &cc->link);
+	reschedule_all_outputs();
+}
+
+/* Ticks every closing snapshot -- lerps position/size, fades opacity
+ * toward 0, self-destructs (wlr_scene_node_destroy + free) once its tween
+ * completes. Returns whether anything here still needs another frame. */
+static int
+tick_closing_clients(void)
+{
+	ClosingClient *cc, *tmp;
+	int more = 0;
+
+	wl_list_for_each_safe(cc, tmp, &closing_clients, link) {
+		uint32_t elapsed = now_ms() - cc->time_started;
+		float p = cc->duration ? (float)elapsed / (float)cc->duration : 1.0f;
+		float e, scale;
+		struct wasp_buf_ctx ctx;
+		struct wlr_box b;
+
+		if (p > 1.0f)
+			p = 1.0f;
+		e = ease(p, AnimClose);
+
+		b.x = cc->from.x + (int)((cc->to.x - cc->from.x) * e);
+		b.y = cc->from.y + (int)((cc->to.y - cc->from.y) * e);
+		b.width  = cc->from.width  + (int)((cc->to.width  - cc->from.width)  * e);
+		b.height = cc->from.height + (int)((cc->to.height - cc->from.height) * e);
+		wlr_scene_node_set_position(&cc->tree->node, b.x, b.y);
+
+		/* Safe to use one scale for both axes here (unlike OPEN's use of
+		 * scale_buffer_iter) -- cc->to is always zoom_box(cc->from, ratio),
+		 * which scales width/height by the exact same ratio, so the two
+		 * axes stay proportional to each other at every point of the lerp,
+		 * never a disproportionate tiled-relayout target like OPEN can
+		 * hit. */
+		scale = cc->from.width ? (float)b.width / (float)cc->from.width : 1.0f;
+		ctx.scale_x = ctx.scale_y = scale;
+		ctx.opacity = 1.0f - e;
+		/* 0,0 -- per-buffer natural size is already correct here, unlike
+		 * OPEN (see scale_buffer_iter()'s own comment): this snapshot was
+		 * taken from an already fully-settled, already-correctly-sized
+		 * live frame, nothing for a client to still be catching up on. */
+		ctx.ref_w = ctx.ref_h = 0;
+		wlr_scene_node_for_each_buffer(&cc->tree->node, scale_buffer_iter, &ctx);
+
+		if (p >= 1.0f) {
+			wlr_scene_node_destroy(&cc->tree->node);
+			wl_list_remove(&cc->link);
+			free(cc);
+		} else {
+			more = 1;
+		}
+	}
+	return more;
+}
+
 void
 arrange(Monitor *m)
 {
@@ -687,11 +1461,31 @@ arrange(Monitor *m)
 	if (!m->wlr_output->enabled)
 		return;
 
+	/* wasp: animated tag-switch (wasp.animations) replaces the plain
+	 * enabled/suspended toggle with tagin()/tagout() when on -- see their
+	 * own comments, and NOTES.md item 3. Reading c->scene->node.enabled
+	 * *before* this loop touches it doubles as "was this client visible,
+	 * or still mid-slide-out a moment ago": a tag-out tween deliberately
+	 * keeps the node enabled for its whole duration, so a switch-away-
+	 * then-back before it finishes lands back in the tagin() branch
+	 * (via anim.tag_hide_after) and reverses smoothly instead of popping. */
 	wl_list_for_each(c, &clients, link) {
-		if (c->mon == m) {
-			wlr_scene_node_set_enabled(&c->scene->node, VISIBLEON(c, m));
-			client_set_suspended(c, !VISIBLEON(c, m));
+		int vis;
+
+		if (c->mon != m)
+			continue;
+		vis = VISIBLEON(c, m);
+		if (!animations_enable || !animdur_tag) {
+			wlr_scene_node_set_enabled(&c->scene->node, vis);
+			client_set_suspended(c, !vis);
+			continue;
 		}
+		if (vis && (!c->scene->node.enabled || c->anim.tag_hide_after))
+			tagin(c, m);
+		else if (!vis && c->scene->node.enabled && !c->anim.tag_hide_after)
+			tagout(c, m);
+		else if (!vis && !c->scene->node.enabled)
+			client_set_suspended(c, 1);
 	}
 
 	wlr_scene_node_set_enabled(&m->fullscreen_bg->node,
@@ -2360,6 +3154,20 @@ mapnotify(struct wl_listener *listener, void *data)
 
 	client_get_geometry(c, &c->geom);
 
+	/* wasp: one-shot flag, consumed by whichever resize() call fires
+	 * first for this client below (setmon(), the scratchpad reveal a bit
+	 * further down, or tile()/dwindle()/monocle()'s first pass once
+	 * arrange() runs) -- see start_animation(). Harmless if never
+	 * consumed (unmanaged clients never go through resize()).
+	 * open_pending stays set across every one of those synchronous calls
+	 * (cleared only by this tween's first real animate_client() tick, see
+	 * its own comment on struct wasp_animation) so each one recomputes a
+	 * fresh start box instead of carrying forward an earlier, possibly
+	 * wrongly fractional-scale-negotiated one. wasp.animations, see
+	 * NOTES.md item 3. */
+	c->anim.pending_action = AnimOpen;
+	c->anim.open_pending = 1;
+
 	/* Handle unmanaged clients first so we can return prior create borders */
 	if (client_is_unmanaged(c)) {
 		/* Unmanaged clients always are floating */
@@ -2387,6 +3195,25 @@ mapnotify(struct wl_listener *listener, void *data)
 	/* Insert this client into client lists. */
 	wl_list_insert(&clients, &c->link);
 	wl_list_insert(&fstack, &c->flink);
+
+	/* wasp: if this is a freshly-spawned scratchpad client we're waiting
+	 * on (see togglescratchpad()), mark it isfloating *now*, before
+	 * applyrules()/setmon() below ever run -- otherwise, for the brief
+	 * moment between setmon() assigning its tags and the scratchpad-claim
+	 * block further down actually calling setfloating(c, 1), arrange()'s
+	 * tile() pass sees isfloating still false and treats it as an
+	 * ordinary tiled client, resizing it to fill the whole monitor -- a
+	 * third, wrong target sandwiched between the client's own natural
+	 * size and the real scratchpad box. Always instant/imperceptible
+	 * without animations; with wasp.animations on, that wrong target
+	 * corrupts the OPEN tween's own start box, visible as a garbled,
+	 * non-uniformly-stretched zoom-in (confirmed live, 2026-08-14 --
+	 * more visible at a fractional output scale, where the client also
+	 * takes measurably longer to settle, but present regardless of
+	 * scale). */
+	if (pending_scratchpad_name && selmon
+			&& !strcmp(client_get_appid(c), pending_scratchpad_appid))
+		c->isfloating = 1;
 
 	/* Set initial monitor, tags, floating status, and focus:
 	 * we always consider floating, clients that have parent and thus
@@ -2818,9 +3645,12 @@ void
 reload(const Arg *arg)
 {
 	/* Re-reads config.lua and re-applies whatever of it can take effect
-	 * without a restart: gaps (arrange() already reads
-	 * gapsinner/gapsouter/gapsmart live, nothing extra needed there),
-	 * the bar's visibility/position/colors, every existing client's
+	 * without a restart: gaps and animations (wasp.animations -- arrange()/
+	 * resize() already read the animations_enable/animdur_.../animtype_...
+	 * globals live, same as gapsinner/gapsouter/gapsmart, nothing extra
+	 * needed there either -- load_animations() also rebakes the easing
+	 * lookup tables, see init_anim_curves()), the bar's visibility/
+	 * position/colors, every existing client's
 	 * border color, the root background, and keyboard repeat speed + xkb
 	 * layout. Keybindings too, for free -- keybinding()'s dispatch loop
 	 * already walks the live keys[]/nkeys globals on every keypress.
@@ -2903,6 +3733,30 @@ rendermon(struct wl_listener *listener, void *data)
 	Client *c;
 	struct wlr_output_state pending = {0};
 	struct timespec now;
+	int more = 0;
+	int ticked = 0;
+	uint32_t t = now_ms();
+
+	/* wasp: tick every animating client and closing-client snapshot once
+	 * per output refresh, before the pending-resize check and commit
+	 * below, so a tween's new frame is what actually gets presented this
+	 * pass (wasp.animations, see NOTES.md item 3). Every monitor's own
+	 * frame event ticks the same global lists independently -- harmless
+	 * with >1 monitor, since animate_client()/tick_closing_clients() are
+	 * idempotent per elapsed wall-clock time, not per-call (same approach
+	 * MangoWC itself uses). Throttled to ANIM_TICK_MIN_MS -- see its own
+	 * comment -- and only *this* (real, un-throttled) pass re-arms another
+	 * frame below, so a runaway frame-event rate isn't perpetuated by our
+	 * own re-arming even if something upstream is still delivering frame
+	 * events faster than that floor. An untouched commit/frame_done still
+	 * happens below on every single call, throttled or not. */
+	if (t - last_anim_tick_ms >= ANIM_TICK_MIN_MS) {
+		last_anim_tick_ms = t;
+		ticked = 1;
+		wl_list_for_each(c, &clients, link)
+			more = animate_client(c) || more;
+		more = tick_closing_clients() || more;
+	}
 
 	/* Render if no XDG clients have an outstanding resize and are visible on
 	 * this monitor. */
@@ -2918,6 +3772,14 @@ skip:
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	wlr_scene_output_send_frame_done(m->scene_output, &now);
 	wlr_output_state_finish(&pending);
+
+	/* wasp: re-arm for another frame while anything is still animating --
+	 * must not be gated on whether *this* call actually committed (the
+	 * skip: case above still needs to keep ticking), but *is* gated on
+	 * `ticked` (see ANIM_TICK_MIN_MS above) so a throttled pass doesn't
+	 * perpetuate its own re-arming. */
+	if (ticked && more)
+		reschedule_all_outputs();
 }
 
 void
@@ -2953,7 +3815,6 @@ void
 resize(Client *c, struct wlr_box geo, int interact)
 {
 	struct wlr_box *bbox;
-	struct wlr_box clip;
 
 	if (!c->mon || !client_surface(c)->mapped)
 		return;
@@ -2964,22 +3825,15 @@ resize(Client *c, struct wlr_box geo, int interact)
 	c->geom = geo;
 	applybounds(c, bbox);
 
-	/* Update scene-graph, including borders */
-	wlr_scene_node_set_position(&c->scene->node, c->geom.x, c->geom.y);
-	wlr_scene_node_set_position(&c->scene_surface->node, c->bw, c->bw);
-	wlr_scene_rect_set_size(c->border[0], c->geom.width, c->bw);
-	wlr_scene_rect_set_size(c->border[1], c->geom.width, c->bw);
-	wlr_scene_rect_set_size(c->border[2], c->bw, c->geom.height - 2 * c->bw);
-	wlr_scene_rect_set_size(c->border[3], c->bw, c->geom.height - 2 * c->bw);
-	wlr_scene_node_set_position(&c->border[1]->node, 0, c->geom.height - c->bw);
-	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
-	wlr_scene_node_set_position(&c->border[3]->node, c->geom.width - c->bw, c->bw);
-
-	/* this is a no-op if size hasn't changed */
+	/* Real XDG/X11 configure -- issued exactly once per relayout, not
+	 * once per animation frame (this is a no-op if size hasn't changed).
+	 * start_animation() below (wasp: wasp.animations, see NOTES.md item
+	 * 3) handles the possibly-tweened *visual* scene-graph update
+	 * separately -- see apply_client_geom(). */
 	c->resize = client_set_size(c, c->geom.width - 2 * c->bw,
 			c->geom.height - 2 * c->bw);
-	client_get_clip(c, &clip);
-	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
+
+	start_animation(c);
 }
 
 void
@@ -3328,6 +4182,7 @@ setup(void)
 	 */
 	wl_list_init(&clients);
 	wl_list_init(&fstack);
+	wl_list_init(&closing_clients);
 
 	xdg_shell = wlr_xdg_shell_create(dpy, 6);
 	wl_signal_add(&xdg_shell->events.new_toplevel, &new_xdg_toplevel);
@@ -3729,6 +4584,7 @@ moveresizekb(const Arg *arg)
 	Client *c = focustop(selmon);
 	Monitor *m = selmon;
 	const int *d;
+	Client *prev_grabc;
 
 	if (!(m && arg && arg->v && c))
 		return;
@@ -3736,12 +4592,24 @@ moveresizekb(const Arg *arg)
 		return;
 
 	d = arg->v;
+	/* wasp: briefly stand in as grabc -- start_animation() (wasp.animations,
+	 * see NOTES.md item 3) treats "c == grabc" as "this is a real
+	 * interactive move/resize, apply instantly" the same way movemouse's/
+	 * resizemouse's own grabc-driven resize() calls already do; this one
+	 * has no continuous grab of its own (a single keypress, not a drag)
+	 * but is exactly as interactive in the sense that matters here.
+	 * Restored right after -- see prev_grabc -- in case a real mouse grab
+	 * happened to be in progress at the same time (unlikely, but cheap to
+	 * not clobber). */
+	prev_grabc = grabc;
+	grabc = c;
 	resize(c, (struct wlr_box){
 		.x = c->geom.x + d[0],
 		.y = c->geom.y + d[1],
 		.width = c->geom.width + d[2],
 		.height = c->geom.height + d[3],
 	}, 1);
+	grabc = prev_grabc;
 }
 
 void
@@ -3810,6 +4678,11 @@ unmapnotify(struct wl_listener *listener, void *data)
 			focusclient(focustop(selmon), 1);
 		}
 	} else {
+		/* wasp: snapshot before setmon(c, NULL, 0) below wipes c->mon --
+		 * init_closing_client() needs it (and c->geom/c->scene, all still
+		 * live at this point) to know where/whether to animate a close.
+		 * wasp.animations, see NOTES.md item 3. */
+		init_closing_client(c);
 		wl_list_remove(&c->link);
 		setmon(c, NULL, 0);
 		wl_list_remove(&c->flink);

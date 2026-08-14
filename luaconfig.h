@@ -69,6 +69,36 @@ extern unsigned int gapsinner;
 extern unsigned int gapsouter;
 extern int gapsmart;
 
+/* wasp.animations = { enable=, duration_move=, duration_open=,
+ * duration_close=, duration_tag=, type_open=, type_close=, zoom_ratio=,
+ * fade_from_opacity=, tag_direction=, curve_move=, curve_open=,
+ * curve_close=, curve_tag= } -- MangoWC-style open/close/move/tag-switch
+ * window tweening on top of wlr_scene, see NOTES.md item 3. `enable =
+ * false` (the default) reproduces dwl.c's original instant behavior
+ * bit-for-bit. Durations are milliseconds; `type_open`/`type_close` are
+ * "fade" (opacity only), "zoom" (shrink/grow around center by
+ * `zoom_ratio`, also fades) or "none". `tag_direction` is which monitor
+ * edge tag-switches slide to/from: "left"/"right"/"top"/"bottom". The
+ * curve_* fields are CSS cubic-bezier()-style control points
+ * {x1,y1,x2,y2} (endpoints pinned at (0,0)/(1,1)) baked into a lookup
+ * table by init_anim_curves() (dwl.c) every time this table is
+ * (re)loaded -- see ease() in dwl.c for why a LUT instead of solving the
+ * Bezier analytically. */
+struct wasp_bezier { float x1, y1, x2, y2; };
+
+extern int animations_enable;
+extern unsigned int animdur_move, animdur_open, animdur_close, animdur_tag;
+extern const char *animtype_open, *animtype_close;
+extern float animzoom_ratio, animfade_from_opacity;
+extern const char *animtag_direction;
+extern struct wasp_bezier animbz_move, animbz_open, animbz_close, animbz_tag;
+
+/* Bakes animbz_* into dwl.c's per-action easing lookup tables. Defined in
+ * dwl.c (not luaconfig.c) since it's dwl.c's own ease()/animate_client()
+ * that consume the tables; called at the end of load_animations() so a
+ * hot-reload picks up new curves immediately, same as gaps. */
+void init_anim_curves(void);
+
 /* keybindings, rebuilt from scratch on every waspconfig_load() call. */
 extern Key *keys;
 extern size_t nkeys;
