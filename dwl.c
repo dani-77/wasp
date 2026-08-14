@@ -143,6 +143,23 @@ struct wasp_animation {
 	                     * resets time_started) would restart the fade from
 	                     * opacity_from instead of resuming, visibly
 	                     * flashing back down first. */
+	int open_pending; /* set once in mapnotify(), cleared on this tween's
+	                    * first real animate_client() tick (matching
+	                    * MangoWC's own is_pending_open_animation) -- while
+	                    * true, every start_animation() OPEN arm
+	                    * *recomputes* open_animation_from() fresh against
+	                    * whatever c->geom currently is, rather than
+	                    * reusing a stale interpolated box from an earlier,
+	                    * possibly wrongly-scaled arm. Needed because a
+	                    * freshly mapped client can commit its first real,
+	                    * correctly fractional-scale-negotiated frame
+	                    * *after* wasp has already armed (and briefly
+	                    * ticked) the open tween against an earlier,
+	                    * not-yet-negotiated one -- confirmed live
+	                    * (2026-08-14): the zoomed-in content overflowed
+	                    * the border by ~25%, exactly the configured output
+	                    * scale, only on a client's very first ever open,
+	                    * self-correcting afterwards. */
 };
 
 typedef struct Monitor Monitor;
@@ -356,7 +373,6 @@ static struct wlr_box zoom_box(struct wlr_box b, float ratio);
 static struct wlr_box open_animation_from(Client *c);
 static struct wlr_box tag_edge_box(Monitor *m, struct wlr_box real);
 static void scale_buffer_iter(struct wlr_scene_buffer *buffer, int sx, int sy, void *data);
-static void unscale_buffer_iter(struct wlr_scene_buffer *buffer, int sx, int sy, void *data);
 static void apply_client_geom(Client *c, struct wlr_box vis);
 static void start_animation(Client *c);
 static void reschedule_all_outputs(void);
@@ -961,32 +977,30 @@ scale_buffer_iter(struct wlr_scene_buffer *buffer, int sx, int sy, void *data)
 
 	if (!buffer->buffer)
 		return;
-	if (ctx->scale_x != 1.0f || ctx->scale_y != 1.0f) {
-		if (ctx->ref_w && ctx->ref_h) {
-			nat_w = ctx->ref_w;
-			nat_h = ctx->ref_h;
-		} else if ((ss = wlr_scene_surface_try_from_buffer(buffer))) {
-			nat_w = ss->surface->current.width;
-			nat_h = ss->surface->current.height;
-		} else {
-			nat_w = buffer->buffer->width;
-			nat_h = buffer->buffer->height;
-		}
-		wlr_scene_buffer_set_dest_size(buffer,
-				MAX(1, (int)(nat_w * ctx->scale_x)),
-				MAX(1, (int)(nat_h * ctx->scale_y)));
+	/* Always set dest_size explicitly, even for scale_x == scale_y ==
+	 * 1.0f (previously skipped as "already natural size, don't touch") --
+	 * confirmed the hard way (2026-08-14): resetting to (0,0)/"auto" at
+	 * OPEN completion (see below) let a client whose buffer_scale hadn't
+	 * (yet, or ever, in one nested test) caught up to the output's
+	 * fractional scale render at its own natural-but-wrongly-scaled size
+	 * again, undoing the correct explicit size the tween had been
+	 * forcing throughout -- looked perfect for several frames, then
+	 * visibly overflowed the border by ~25% (the configured 1.25 output
+	 * scale, exactly) right as the animation finished and "let go." */
+	if (ctx->ref_w && ctx->ref_h) {
+		nat_w = ctx->ref_w;
+		nat_h = ctx->ref_h;
+	} else if ((ss = wlr_scene_surface_try_from_buffer(buffer))) {
+		nat_w = ss->surface->current.width;
+		nat_h = ss->surface->current.height;
+	} else {
+		nat_w = buffer->buffer->width;
+		nat_h = buffer->buffer->height;
 	}
+	wlr_scene_buffer_set_dest_size(buffer,
+			MAX(1, (int)(nat_w * ctx->scale_x)),
+			MAX(1, (int)(nat_h * ctx->scale_y)));
 	wlr_scene_buffer_set_opacity(buffer, ctx->opacity);
-}
-
-/* Resets a buffer back to natural size/full opacity -- called once an OPEN
- * tween completes, so a later ordinary resize()/relayout doesn't inherit a
- * stale explicit dest_size from the open animation. */
-static void
-unscale_buffer_iter(struct wlr_scene_buffer *buffer, int sx, int sy, void *data)
-{
-	wlr_scene_buffer_set_dest_size(buffer, 0, 0);
-	wlr_scene_buffer_set_opacity(buffer, 1.0f);
 }
 
 /* The scene-graph-writing tail of what resize() used to do unconditionally
@@ -1134,7 +1148,8 @@ start_animation(Client *c)
 	}
 
 	if (action == AnimOpen)
-		c->anim.initial = c->anim.running ? c->anim.current : open_animation_from(c);
+		c->anim.initial = (!c->anim.running || c->anim.open_pending)
+				? open_animation_from(c) : c->anim.current;
 	else if (action == AnimTag && !c->anim.running)
 		c->anim.initial = tag_edge_box(c->mon, c->geom);
 	else
@@ -1203,6 +1218,14 @@ animate_client(Client *c)
 	if (!c->anim.running)
 		return 0;
 
+	/* This is a real tick (as opposed to the synchronous re-arms
+	 * start_animation() itself may have already done, back to back,
+	 * before rendermon() ever got a chance to call this) -- lock in
+	 * whatever open_animation_from() last computed instead of letting a
+	 * later arm keep recomputing it. See struct wasp_animation's own
+	 * comment on open_pending. */
+	c->anim.open_pending = 0;
+
 	elapsed = now_ms() - c->anim.time_started;
 	p = c->anim.duration ? (float)elapsed / (float)c->anim.duration : 1.0f;
 	if (p > 1.0f)
@@ -1231,8 +1254,20 @@ animate_client(Client *c)
 		return 1;
 
 	c->anim.running = 0;
-	if (c->anim.action == AnimOpen)
-		wlr_scene_node_for_each_buffer(&c->scene_surface->node, unscale_buffer_iter, NULL);
+	if (c->anim.action == AnimOpen) {
+		/* Lock in the correct logical content size explicitly (scale
+		 * 1.0, but still an explicit dest_size -- see scale_buffer_iter()'s
+		 * own comment on why *not* resetting to "auto" here matters),
+		 * rather than leaving it for a client whose buffer_scale may
+		 * still not match the output's fractional scale to get wrong on
+		 * its own. */
+		struct wasp_buf_ctx ctx;
+		ctx.scale_x = ctx.scale_y = 1.0f;
+		ctx.opacity = 1.0f;
+		ctx.ref_w = c->anim.target.width - 2 * (int)c->bw;
+		ctx.ref_h = c->anim.target.height - 2 * (int)c->bw;
+		wlr_scene_node_for_each_buffer(&c->scene_surface->node, scale_buffer_iter, &ctx);
+	}
 	if (c->anim.tag_hide_after) {
 		wlr_scene_node_set_enabled(&c->scene->node, 0);
 		c->anim.tag_hide_after = 0;
@@ -3116,8 +3151,14 @@ mapnotify(struct wl_listener *listener, void *data)
 	 * further down, or tile()/dwindle()/monocle()'s first pass once
 	 * arrange() runs) -- see start_animation(). Harmless if never
 	 * consumed (unmanaged clients never go through resize()).
-	 * wasp.animations, see NOTES.md item 3. */
+	 * open_pending stays set across every one of those synchronous calls
+	 * (cleared only by this tween's first real animate_client() tick, see
+	 * its own comment on struct wasp_animation) so each one recomputes a
+	 * fresh start box instead of carrying forward an earlier, possibly
+	 * wrongly fractional-scale-negotiated one. wasp.animations, see
+	 * NOTES.md item 3. */
 	c->anim.pending_action = AnimOpen;
+	c->anim.open_pending = 1;
 
 	/* Handle unmanaged clients first so we can return prior create borders */
 	if (client_is_unmanaged(c)) {

@@ -217,12 +217,50 @@ closed out, modulo confirming #1 with Daniel):
      start box via the "resuming" retarget path. Fixed: mark `isfloating
      = 1` as soon as the pending-scratchpad match is detected, *before*
      `applyrules()`/`setmon()` ever run, so `tile()` never gets the
-     chance to claim it. A small residual (content very slightly
-     overflowing the border for the first couple of frames, since the
-     "resuming" path still reuses the OPEN tween's original start box
-     rather than recomputing one for the corrected target) was left as-is
-     -- clearly minor next to the fixed bug, not chased further this
-     session.
+     chance to claim it.
+
+   **Two more, same investigation, chased to a clean fix instead of left
+   as residual** (Daniel measured the leftover overflow precisely --
+   pixel-counted it at exactly ~25%, matching the configured 1.25 output
+   scale, which is what pointed at both of these):
+
+   - **Content still bled past the border on a client's very first ever
+     open** (any window, not scratchpad-specific -- confirmed both, and
+     confirmed absent at output scale 1.0). Root cause, this time really
+     about fractional-scale negotiation timing, not a wasp logic bug per
+     se: `open_animation_from()`'s start box got computed once, then
+     carried forward through every subsequent synchronous retarget within
+     the same `mapnotify()` call chain (the "resuming" path) -- but a
+     freshly mapped client's *correctly* fractional-scale-negotiated
+     frame can commit slightly after wasp has already computed that start
+     box against an earlier, not-yet-negotiated one. Fixed by porting
+     MangoWC's own solution for the identical problem
+     (`is_pending_open_animation`, confirmed by reading its `resize()`):
+     added `wasp_animation.open_pending`, set once in `mapnotify()`,
+     *recomputing* `open_animation_from()` fresh on every OPEN arm while
+     it's set, only "locking in" on this tween's first real
+     `animate_client()` tick (not on completion -- MangoWC clears its
+     own flag at the same point, right when real per-frame ticking
+     begins, for the same reason).
+   - **The above fix alone wasn't enough** -- pixel-measured proof: early
+     frames matched perfectly (ratio 1.000), but by the animation's own
+     end the *exact same* ~25% overflow came back and stayed. Root cause:
+     `unscale_buffer_iter()` reset a completed OPEN's buffer to `(0,0)`
+     ("use the buffer's own natural size") on the assumption that was
+     always correct once the tween was done -- but if the client's
+     `buffer_scale` still doesn't match the output's fractional scale by
+     then (seemingly the case throughout this nested test session, not
+     just transiently), "natural size" itself is wrong, and resetting to
+     it undid the correct explicit size the animation had been forcing
+     the whole time. Fixed: removed `unscale_buffer_iter()` entirely --
+     `scale_buffer_iter()` no longer skips the `dest_size` call at
+     scale 1.0 (that skip was the other half of the same wrong
+     assumption), and OPEN's completion now calls it one more time with
+     `scale_x = scale_y = 1.0` against the tween's own known-correct
+     target content size, *locking in* an explicit correct size rather
+     than trusting the client to already have one. Pixel-verified after
+     this fix: ratio 1.000 on every single frame, start to finish,
+     including well after completion.
 
 Two more added 2026-08-12 (not yet ordered relative to the three above):
 
