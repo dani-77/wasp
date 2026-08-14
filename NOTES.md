@@ -11,9 +11,11 @@ decided all at once.
 Three things, in this order (2026-08-14: #2 and #3 done, #1 likely already
 covered in substance -- see its own note -- so the original three-item list
 is effectively closed out, modulo confirming #1 with Daniel). #7 (scenefx
-blur/rounded corners) and #8 (touchpad gestures) were queued in after,
-2026-08-13/14 -- #8 has no rendering-code dependency on #7 and is assessed
-easier, so do it first if picking one:
+blur/rounded corners), #8 (touchpad gestures), and #9 (modern
+screen-capture protocol + per-window capture privacy) were queued in
+after, 2026-08-13/14 -- #8 and #9 have no rendering-code dependency on
+#7 and are independent of each other too, so either is fine to pick up
+first:
 
 1. **Keyboard-only window resize/move.** **Scoped down (2026-08-12)**:
    not a sway/i3 modal resize-mode after all — Daniel's call was to keep
@@ -471,6 +473,70 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
    `luaconfig.c` load pattern as `wasp.rules`/`wasp.scratchpad`. No new
    dependency either -- libinput/wlroots already deliver the events wasp
    would just start listening for.
+
+9. **Modern screen-capture protocol (`ext-image-copy-capture-v1`) +
+   per-window capture privacy.** (2026-08-14, researched via MangoWC
+   after Daniel asked how ashwc's `wlr-screencopy` compared to wasp's own
+   -- turned out to be a non-question, both are identical one-liners, but
+   it surfaced this real gap instead). wasp today only creates the
+   legacy pair -- `wlr_export_dmabuf_manager_v1_create(dpy)` +
+   `wlr_screencopy_manager_v1_create(dpy)`, right next to
+   `wlr_data_device_manager_create()` in `dwl.c`'s `setup()` -- and so
+   does ashwc (`src/ashwc.c`, same two calls, nothing else, confirmed
+   while researching items 7/8 above). Output-level only: a client can
+   only ever ask to capture a whole output, never a single window, and
+   no window has any way to opt out of being captured.
+   This isn't just "MangoWC happens to do more" -- it's also the
+   direction we'd already separately flagged wasp would likely need to
+   move in anyway, since `wlr-screencopy-unstable-v1` is a wlroots-
+   specific protocol the ecosystem has been steering away from in favour
+   of the cross-compositor, staged `ext-image-copy-capture-v1` +
+   `ext-image-capture-source-v1` protocols (also what newer
+   `xdg-desktop-portal-wlr` builds prefer when the compositor offers
+   them) -- worth confirming the exact wlroots-0.20-era deprecation/
+   recommendation wording before landing anything, this note is from
+   reading MangoWC's usage, not from wlroots' own docs directly.
+   MangoWC's implementation (`src/mango.c`, actually read, not skimmed):
+   - `wlr_ext_output_image_capture_source_manager_v1_create(dpy, 1)` --
+     the modern, protocol-standard equivalent of whole-output
+     `wlr-screencopy`.
+   - `wlr_ext_foreign_toplevel_list_v1_create(dpy, 1)` +
+     `wlr_ext_foreign_toplevel_image_capture_source_manager_v1_create(dpy,
+     1)` -- lets a client request capture of *one window* by its
+     foreign-toplevel handle instead of the whole output.
+     `handle_new_foreign_toplevel_capture_request()` builds a
+     `wlr_ext_image_capture_source_v1` lazily off the client's own scene
+     subtree (`wlr_ext_image_capture_source_v1_create_with_scene_node()`)
+     and accepts the request -- this is genuinely new capability, not
+     something `wlr-screencopy` can do at all (it has no concept of "just
+     this window").
+   - **Per-window capture privacy** -- a `shield_when_capture` rule field
+     (`c->shield_when_capture`/`l->shield_when_capture`, settable per
+     client and per layer-surface). A flagged window's own per-window
+     capture request is refused outright (early `return` in
+     `handle_new_foreign_toplevel_capture_request()`). More interesting:
+     while *any* whole-output capture session is live, MangoWC listens
+     for the `ext-image-copy-capture` manager's `events.new_session` and
+     the session's own `events.destroy`
+     (`handle_iamge_copy_capture_new_session()`/`handle_session_destroy()`)
+     and forces an `arrange()` that swaps the flagged window's real
+     content for a solid `wlr_scene_rect` "shield" node for the exact
+     duration of that capture session, reverting the moment it ends --
+     session-aware, not a static always-on placeholder that would also
+     hide the window from the user's own eyes.
+   Not yet done: nothing landed in wasp for this. Config surface would
+   be a new field on `wasp.rules` entries (`shield_when_capture = true`,
+   alongside the existing `app_id`/`title`/`tags`/`floating`/etc.
+   matchers wasp already parses) plus the new manager-creation calls in
+   `setup()`; the "look up a client's own scene subtree" step MangoWC
+   and ashwc both do is already something wasp's rules/scratchpad code
+   does routinely, so the wiring shape is familiar even though the
+   protocol itself is new. Open question worth settling before starting:
+   whether to keep the legacy `wlr-screencopy` pair running alongside the
+   new protocol (safer, broader client compatibility today) or replace
+   it outright -- depends on how widely `ext-image-copy-capture-v1`
+   support has actually landed in the portal/screenshot tools wasp users
+   rely on, not checked yet.
 
 ## Core (not patch-derived)
 - **Lua config, live-reloadable — done (2026-08-12), bound-key trigger**:
