@@ -13,4 +13,23 @@
 #
 # Not needed for local/dev testing -- `scripts/statusbar.sh | ./wasp`
 # from the repo does the same thing directly.
-exec wasp-statusbar | exec wasp
+#
+# wasp itself (and nothing upstream of this script -- greetd et al. don't
+# either) ever starts a D-Bus *session* bus, only whatever system bus the
+# distro init runs. Without one, DBUS_SESSION_BUS_ADDRESS never exists
+# anywhere in the session, and D-Bus clients either fail outright or fall
+# back to an ad-hoc `dbus-launch --autolaunch` bus of their own -- which is
+# exactly what was behind d77run's app_id instability (see NOTES.md,
+# 2026-08-13): GApplication's D-Bus single-instance registration silently
+# falling back when it can't find a bus. dbus-run-session opens one real
+# session bus and exports its address before exec'ing wasp, so every
+# client -- wasp.autostart's included -- inherits a working one from the
+# start.
+#
+# XDG_CURRENT_DESKTOP=wasp lets xdg-desktop-portal pick a
+# wasp-portals.conf (see packaging/wasp-portals.conf) over the ambiguous
+# generic portals.conf -- it reads this from the environment it's
+# D-Bus-activated in, which is this session bus, so it has to be set here,
+# before dbus-run-session hands off, not later inside wasp itself.
+export XDG_CURRENT_DESKTOP=wasp
+exec dbus-run-session -- sh -c 'exec wasp-statusbar | exec wasp'

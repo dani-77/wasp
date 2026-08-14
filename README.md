@@ -82,6 +82,16 @@ working:
   field `reload` re-applies; the rest stays a startup-time setting, like
   it always was.
 
+- **D-Bus session + xdg-desktop-portal**: `wasp-session` (what `wasp.desktop`
+  actually launches) wraps startup in `dbus-run-session` and exports
+  `XDG_CURRENT_DESKTOP=wasp`, so every client — the bar's status pipe,
+  `wasp.autostart`, anything you launch by hand — gets a real D-Bus
+  session bus from the first process on, instead of falling back to an
+  ad-hoc one per app (or none at all). `packaging/wasp-portals.conf`
+  (installed to `/etc/xdg-desktop-portal/`) picks `gtk` for
+  FileChooser/Settings/Notification and `wlr` for ScreenCast/Screenshot —
+  see Building below for the packages that back those.
+
 Not done yet: mouse-drag resize variety and more border styles. The full
 running list, plus which [dwl-patches] are earmarked for which feature and
 why, lives in [`NOTES.md`](NOTES.md) — that's the file to check for current
@@ -105,6 +115,16 @@ lines in `config.mk` if you'd rather not pull in libxcb at all.
 make
 sudo make install
 ```
+
+`make install` also drops `packaging/wasp-portals.conf` under
+`/etc/xdg-desktop-portal/`, but it only has anything to configure once
+the backends it names are actually installed: `dbus`, `dbus-run-session`
+(usually the same package), `xdg-desktop-portal`,
+`xdg-desktop-portal-gtk`, and `xdg-desktop-portal-wlr`. None of these are
+wasp-specific — same portal backends most wlroots compositors use — so
+they're not pulled in by `make install` itself, just expected to already
+be on the system (or installed alongside it) the way libinput or wayland
+are.
 
 ## Configuring
 
@@ -167,7 +187,7 @@ Two licenses, because this is a fork, not a from-scratch project:
 - **[`LICENSE.wasp`](LICENSE.wasp) (MIT)** — files wasp added that have no
   upstream dwl equivalent and aren't derived from it: this README,
   `NOTES.md`, `luaconfig.c`/`.h`, `examples/config.lua`, `scripts/*`,
-  `wasp.desktop`, and `assets/*`. Copyright Daniel Azevedo.
+  `packaging/*`, `wasp.desktop`, and `assets/*`. Copyright Daniel Azevedo.
 
 [dwl]: https://codeberg.org/dwl/dwl
 [dwl-patches]: https://codeberg.org/dwl/dwl-patches

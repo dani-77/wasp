@@ -478,6 +478,35 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
   wayland-sessions-reading greeter) can list/select it. `dwl.1`'s man page
   content itself is still the unmodified upstream dwl one — not renamed,
   out of scope for now.
+- **D-Bus session bus + xdg-desktop-portal (done, 2026-08-14)**: confirmed
+  live (`DBUS_SESSION_BUS_ADDRESS` empty in a real wasp session, only the
+  distro's system bus running) that nothing upstream of `wasp-session` —
+  not wasp itself, not greetd — ever starts a D-Bus *session* bus. This is
+  the same root cause already written up above as d77run's app_id
+  instability (GApplication falling back to its raw id when D-Bus
+  single-instance registration has nothing to register against), just
+  caught at the source this time instead of downstream. `scripts/
+  wasp-session` now wraps the whole pipeline in `dbus-run-session --`
+  (same pattern as spitfire's `packaging/spitfire-session`) and exports
+  `XDG_CURRENT_DESKTOP=wasp` before handing off, so every client — the
+  bar's stdin pipe, `wasp.autostart`, anything a user spawns — inherits a
+  real session bus from the very first process. `packaging/
+  wasp-portals.conf` (new dir, installed to
+  `/etc/xdg-desktop-portal/wasp-portals.conf` by `make install`) pins
+  `default=gtk` (FileChooser/Settings/Notification/Print, no DE required)
+  plus explicit `Secret=gnome-keyring` (already running here) and
+  `ScreenCast=wlr`/`Screenshot=wlr` — wasp already creates both
+  `wlr_screencopy_manager_v1` and `wlr_export_dmabuf_manager_v1` in
+  `setup()`, which is what `xdg-desktop-portal-wlr` needs on the
+  compositor side, so those two are real, not aspirational. Deliberately
+  not `xdg-desktop-portal-hyprland`, even though it's the one already
+  installed on this machine — it talks to Hyprland's own IPC socket for
+  window listing and doesn't work against a plain wlr-screencopy
+  compositor like wasp. Needs `xdg-desktop-portal`,
+  `xdg-desktop-portal-gtk`, and `xdg-desktop-portal-wlr` installed (none
+  were, as of 2026-08-14 — only `-hyprland` was) for the portals to
+  actually resolve; the `.conf` file alone just picks which backend
+  *would* handle each interface once something provides it.
 
 ## Not yet decided / just flagged
 - **Status text source — decided (2026-08-12), option (a)**: keep dwl's

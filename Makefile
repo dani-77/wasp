@@ -56,7 +56,7 @@ dist: clean
 	mkdir -p wasp-$(VERSION)
 	cp -R LICENSE* Makefile CHANGELOG.md README.md NOTES.md client.h config.def.h \
 		config.mk protocols dwl.1 dwl.c util.c util.h luaconfig.c luaconfig.h \
-		examples scripts wasp.desktop wasp-$(VERSION)
+		examples scripts packaging wasp.desktop wasp-$(VERSION)
 	tar -caf wasp-$(VERSION).tar.gz wasp-$(VERSION)
 	rm -rf wasp-$(VERSION)
 
@@ -78,11 +78,15 @@ install: wasp
 	mkdir -p $(DESTDIR)$(DATADIR)/wasp
 	cp -f examples/config.lua $(DESTDIR)$(DATADIR)/wasp/config.lua
 	chmod 644 $(DESTDIR)$(DATADIR)/wasp/config.lua
+	mkdir -p $(DESTDIR)/etc/xdg-desktop-portal
+	cp -f packaging/wasp-portals.conf $(DESTDIR)/etc/xdg-desktop-portal/wasp-portals.conf
+	chmod 644 $(DESTDIR)/etc/xdg-desktop-portal/wasp-portals.conf
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/wasp $(DESTDIR)$(PREFIX)/bin/wasp-statusbar \
 		$(DESTDIR)$(PREFIX)/bin/wasp-session $(DESTDIR)$(MANDIR)/man1/dwl.1 \
 		$(DESTDIR)$(DATADIR)/wayland-sessions/wasp.desktop \
-		$(DESTDIR)$(DATADIR)/wasp/config.lua
+		$(DESTDIR)$(DATADIR)/wasp/config.lua \
+		$(DESTDIR)/etc/xdg-desktop-portal/wasp-portals.conf
 
 .SUFFIXES: .c .o
 .c.o:
