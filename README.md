@@ -91,6 +91,15 @@ working:
   (installed to `/etc/xdg-desktop-portal/`) picks `gtk` for
   FileChooser/Settings/Notification and `wlr` for ScreenCast/Screenshot —
   see Building below for the packages that back those.
+- **Animations**: `wasp.animations = { enable, duration_move, duration_open,
+  duration_close, duration_tag, type_open, type_close, zoom_ratio,
+  fade_from_opacity, tag_direction, curve_move, curve_open, curve_close,
+  curve_tag }` — MangoWC-style open/close/move/tag-switch tweening
+  (`"fade"`/`"zoom"`/`"none"`, cubic-bezier easing per action). `enable =
+  false` (the default) reproduces the original instant behavior
+  bit-for-bit; live on hot-reload, same as gaps. Not ported: layer-shell
+  (bar/panel) animation, per-window-rule overrides, `slide`-from-edge for
+  OPEN — see `NOTES.md` item 3 for the full scope note.
 
 Not done yet: mouse-drag resize variety and more border styles. The full
 running list, plus which [dwl-patches] are earmarked for which feature and

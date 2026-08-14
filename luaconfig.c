@@ -40,6 +40,12 @@ int repeat_delay;
 unsigned int gapsinner;
 unsigned int gapsouter;
 int gapsmart;
+int animations_enable;
+unsigned int animdur_move, animdur_open, animdur_close, animdur_tag;
+const char *animtype_open, *animtype_close;
+float animzoom_ratio, animfade_from_opacity;
+const char *animtag_direction;
+struct wasp_bezier animbz_move, animbz_open, animbz_close, animbz_tag;
 const char ***autostart;
 size_t nautostart;
 Scratchpad *scratchpads;
@@ -147,6 +153,19 @@ set_defaults(void)
 	gapsinner = 0;
 	gapsouter = 0;
 	gapsmart = 0;
+	animations_enable = 0; /* off by default -- see load_animations()/wasp.animations */
+	animdur_move = animdur_open = animdur_tag = 200;
+	animdur_close = 150;
+	animtype_open = "zoom";
+	animtype_close = "zoom";
+	animzoom_ratio = 0.8f;
+	animfade_from_opacity = 0.0f;
+	animtag_direction = "right";
+	animbz_move = animbz_open = animbz_close = animbz_tag =
+		(struct wasp_bezier){ 0.25f, 0.1f, 0.25f, 1.0f };
+	init_anim_curves(); /* bake the defaults now -- ease() (dwl.c) always
+	                      * needs a valid table, even if config.lua is
+	                      * missing/broken and load_animations() never runs */
 	autostart = NULL; /* re-parsed data only -- doesn't touch already-spawned
 	                    * processes, see autostartexec()/reload() in dwl.c */
 	nautostart = 0;
@@ -266,6 +285,40 @@ read_int_field(lua_State *L, int tblidx, const char *key, unsigned int *out)
 }
 
 static void
+read_float_field(lua_State *L, int tblidx, const char *key, float *out)
+{
+	lua_getfield(L, tblidx, key);
+	if (lua_isnumber(L, -1))
+		*out = (float)lua_tonumber(L, -1);
+	lua_pop(L, 1);
+}
+
+/* key = { x1, y1, x2, y2 } -- a CSS cubic-bezier()-style control-point
+ * array. Only overwrites *out if all four entries are present and
+ * numbers, so a malformed/partial table leaves the previous (default)
+ * curve in place rather than baking garbage. */
+static void
+read_bezier_field(lua_State *L, int tblidx, const char *key, struct wasp_bezier *out)
+{
+	lua_getfield(L, tblidx, key);
+	if (lua_istable(L, -1)) {
+		float v[4];
+		int i, ok = 1;
+		for (i = 0; i < 4; i++) {
+			lua_rawgeti(L, -1, i + 1);
+			if (!lua_isnumber(L, -1))
+				ok = 0;
+			else
+				v[i] = (float)lua_tonumber(L, -1);
+			lua_pop(L, 1);
+		}
+		if (ok)
+			*out = (struct wasp_bezier){ v[0], v[1], v[2], v[3] };
+	}
+	lua_pop(L, 1);
+}
+
+static void
 load_border(lua_State *L, int wasptbl)
 {
 	int t;
@@ -333,6 +386,46 @@ load_gaps(lua_State *L, int wasptbl)
 	read_int_field(L, t, "outer", &gapsouter);
 	read_bool_field(L, t, "smart", &gapsmart);
 	lua_pop(L, 1);
+}
+
+/* wasp.animations = { enable=, duration_move=, duration_open=,
+ * duration_close=, duration_tag=, type_open=, type_close=, zoom_ratio=,
+ * fade_from_opacity=, tag_direction=, curve_move=, curve_open=,
+ * curve_close=, curve_tag= } -- see the extern block in luaconfig.h for
+ * what each field does. Always ends by calling init_anim_curves() (dwl.c)
+ * to (re)bake the lookup tables ease() reads from -- needed even when this
+ * table is absent/empty, since set_defaults() already baked the defaults
+ * once, but a hot-reload (see reload() in dwl.c) that changes a curve_*
+ * value needs those tables rebaked too, not just the raw control points
+ * updated. */
+static void
+load_animations(lua_State *L, int wasptbl)
+{
+	int t;
+
+	lua_getfield(L, wasptbl, "animations");
+	if (!lua_istable(L, -1)) {
+		lua_pop(L, 1);
+		init_anim_curves();
+		return;
+	}
+	t = lua_gettop(L);
+	read_bool_field(L, t, "enable", &animations_enable);
+	read_int_field(L, t, "duration_move", &animdur_move);
+	read_int_field(L, t, "duration_open", &animdur_open);
+	read_int_field(L, t, "duration_close", &animdur_close);
+	read_int_field(L, t, "duration_tag", &animdur_tag);
+	read_string_field(L, t, "type_open", &animtype_open);
+	read_string_field(L, t, "type_close", &animtype_close);
+	read_float_field(L, t, "zoom_ratio", &animzoom_ratio);
+	read_float_field(L, t, "fade_from_opacity", &animfade_from_opacity);
+	read_string_field(L, t, "tag_direction", &animtag_direction);
+	read_bezier_field(L, t, "curve_move", &animbz_move);
+	read_bezier_field(L, t, "curve_open", &animbz_open);
+	read_bezier_field(L, t, "curve_close", &animbz_close);
+	read_bezier_field(L, t, "curve_tag", &animbz_tag);
+	lua_pop(L, 1);
+	init_anim_curves();
 }
 
 /* wasp.keyboard = { layout=, variant=, model=, options=, rules=,
@@ -1017,6 +1110,7 @@ waspconfig_load(void)
 		load_bar(L, wasptbl);
 		load_background(L, wasptbl);
 		load_gaps(L, wasptbl);
+		load_animations(L, wasptbl);
 		load_keyboard(L, wasptbl);
 		load_modkey(L, wasptbl);       /* before load_keys(): "mod" resolution */
 		load_terminal_menu(L, wasptbl); /* before load_keys(): spawn-terminal/-menu */
