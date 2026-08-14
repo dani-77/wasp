@@ -87,6 +87,18 @@ wasp.modkey = "alt"
 wasp.autostart = {
   -- { "swaybg", "-i", "/path/to/wallpaper.png" },
   -- { "mako" }, -- notifications
+  -- ScreenCast/Screenshot via xdg-desktop-portal-wlr (see wasp-session's
+  -- dbus-run-session wrapper and packaging/wasp-portals.conf) need
+  -- PipeWire actually running to transport frames -- confirmed
+  -- (2026-08-14) that nothing starts it otherwise, even when installed.
+  -- Just this one line on Void -- its pipewire package brings up its own
+  -- session manager (wireplumber shows up in `ps` on its own, no
+  -- separate autostart entry needed); other distros may package it
+  -- split out, worth checking `ps` after if this doesn't seem to work.
+  -- Skip "pipewire-pulse" unless you're moving audio to PipeWire too --
+  -- it'll otherwise fight a separately-running PulseAudio for the same
+  -- socket.
+  -- { "pipewire" },
 }
 
 -- Named scratchpads -- a hidden, toggleable floating window per slot.

@@ -508,6 +508,39 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
   actually resolve; the `.conf` file alone just picks which backend
   *would* handle each interface once something provides it.
 
+  **Tested end-to-end (2026-08-14), not just by inspection**: installed
+  `xdg-desktop-portal-gtk`/`-wlr`, `make install`ed the new
+  `wasp-session`/`wasp-portals.conf`, then ran a nested wasp
+  (client of the real session, own isolated D-Bus/XDG_RUNTIME_DIR) with
+  `xdg-desktop-portal -v` inside the same bus. Log confirms `wasp-portals.
+  conf` is actually picked up (`XDP: Using portal configuration file
+  '/etc/xdg-desktop-portal/wasp-portals.conf' for desktop 'wasp'`), `gtk`
+  resolves and stays up for FileChooser/Notification/Settings/etc., and
+  `wlr` is correctly *selected* for Screenshot/ScreenCast — but
+  `xdg-desktop-portal-wlr` itself then failed (`couldn't connect to
+  context` / `failed to initialize screencast`): **PipeWire wasn't
+  running** — installed (`pipewire`, `wireplumber`) but nothing started
+  it, same shape of problem as the D-Bus one above, one layer up. Not a
+  wasp bug — confirmed wasp's own protocol support is fine by running
+  `xdg-desktop-portal-wlr` directly against the nested wasp and watching
+  it connect (`wlroots: wl_display connected`, negotiates dmabuf feedback
+  and `zwlr_output_manager_v1` cleanly) before failing purely on the
+  PipeWire step. Fixed by adding `{"pipewire"}` to `wasp.autostart` (live
+  `config.lua`; `examples/config.lua` gets the same line commented out,
+  with a note not to add `pipewire-pulse` since it would contend with the
+  separately-running PulseAudio daemon already handling audio here) —
+  re-ran the same nested test with that autostarted and
+  `xdg-desktop-portal-wlr` got past the PipeWire step cleanly this time
+  (`Using render node /dev/dri/renderD128`, dmabuf/xdg_output
+  negotiation, no errors). Initially added `wireplumber` alongside it too
+  (thinking it needed starting separately as the session/policy manager)
+  -- Daniel corrected that on Void's `pipewire` package it comes up on
+  its own; re-tested with *only* `{"pipewire"}` in autostart and
+  confirmed `wireplumber` still shows up in `ps` by itself, portal test
+  still clean either way. `wasp.autostart` only runs once at startup (see
+  Hot-reload notes above), so this needs an actual restart of wasp to
+  take effect, not just a reload.
+
 ## Not yet decided / just flagged
 - **Status text source — decided (2026-08-12), option (a)**: keep dwl's
   classic stdin-pipe model for the bar's right-side status text (`stext`)
