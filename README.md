@@ -14,7 +14,7 @@ wasp keeps dwl's own goals — small, hackable, few dependencies, suckless
 in spirit — and pulls in a handful of [dwl-patches] adapted to fit this
 model rather than `config.h` + recompile.
 
-## Status (2026-08-13)
+## Status (2026-08-14)
 
 Most of the day-to-day compositor is Lua-driven now. What's actually
 working:
@@ -52,7 +52,8 @@ working:
   an array of argv arrays, fork+exec'd once at startup (no shell), killed
   cleanly on exit.
 - **Hot-reload**: a bound key (`mod+shift+r` by default) re-reads
-  `config.lua` and re-applies gaps, the bar (visibility/position/colors),
+  `config.lua` and re-applies gaps, `wasp.animations` (including
+  re-baking its easing curves), the bar (visibility/position/colors),
   every window's border color, the background, keyboard layout/repeat
   speed, and keybindings themselves — all live, no restart. Border
   *width* on already-open windows and `wasp.autostart` still need one

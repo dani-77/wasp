@@ -262,6 +262,20 @@ closed out, modulo confirming #1 with Daniel):
      this fix: ratio 1.000 on every single frame, start to finish,
      including well after completion.
 
+   **One more, found by re-reading the finished code before proposing a
+   PR, not by live testing** (2026-08-14): `type_open = "none"` was
+   documented as skipping the OPEN tween entirely (same meaning as
+   `type_close = "none"`, which really does), but
+   `open_animation_from()` only ever branched on `"zoom"` vs
+   anything-else, so `"none"` silently behaved exactly like `"fade"`.
+   Fixed in `anim_duration()`: forces `duration = 0` for `AnimOpen` when
+   `animtype_open` is `"none"`, reusing the existing `!dur` instant-apply
+   path (the same path `enable = false` already goes through) rather
+   than adding a new one. Verified nested: first-frame capture right
+   after spawn already shows the client at its final tiled geometry, no
+   growth transient, and `type_close = "zoom"` closing the same session
+   still tweens normally (no regression from the `AnimOpen`-only change).
+
 Two more added 2026-08-12 (not yet ordered relative to the three above):
 
 4. ~~**Output scale**, matching spitfire/niri/MangoWC.~~ **Done

@@ -329,7 +329,8 @@ bind({ "mod", "shift" }, "parenright",  "tag",  { tag = "all" })
 bind({ "mod", "shift" }, "c", "killclient")
 bind({ "mod", "shift" }, "q", "quit")
 
--- Hot-reload -- re-reads this file and re-applies gaps, the bar's
+-- Hot-reload -- re-reads this file and re-applies gaps, wasp.animations
+-- (including re-baking the curve_* easing tables), the bar's
 -- visibility/position/colors, every window's border color, the
 -- background, keyboard layout/repeat speed, wasp.monitors' `scale` (only
 -- that one field -- mfact/nmaster/layout/transform/x/y stay startup-time

@@ -805,7 +805,15 @@ static uint32_t
 anim_duration(int action)
 {
 	switch (action) {
-	case AnimOpen:  return animdur_open;
+	/* type_open = "none" forces duration 0 here -- start_animation()'s
+	 * existing !dur check already applies instantly in that case, same
+	 * as animations_enable=false, so "none" genuinely skips the OPEN
+	 * tween entirely (not just the zoom, still fading, which "none" and
+	 * "fade" used to do identically -- open_animation_from() only ever
+	 * branched on "zoom" vs anything-else). Matches type_close's own
+	 * "none" (checked directly in init_closing_client()) for the same
+	 * user-facing meaning on both sides. */
+	case AnimOpen:  return strcmp(animtype_open, "none") ? animdur_open : 0;
 	case AnimClose: return animdur_close;
 	case AnimTag:   return animdur_tag;
 	case AnimMove:  return animdur_move;
