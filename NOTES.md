@@ -7,20 +7,23 @@ wasp's own model: config driven live from `config.lua`, not `config.h` +
 recompile. Add to this as things come to mind; nothing here needs to be
 decided all at once.
 
-## Up next (2026-08-12, Daniel's stated order)
-Three things, in this order (2026-08-14: #2 and #3 done, #1 likely already
-covered in substance -- see its own note -- so the original three-item list
-is effectively closed out, modulo confirming #1 with Daniel). #7 (scenefx
+## Up next (2026-08-12, Daniel's stated order) -- ALL DONE (2026-08-15)
+Three things, in this order (2026-08-14: #2 and #3 done). #7 (scenefx
 blur/rounded corners), #8 (touchpad gestures), and #9 (modern
 screen-capture protocol + per-window capture privacy) were queued in
 after, 2026-08-13/14 -- #8 and #9 have no rendering-code dependency on
-#7 and are independent of each other too, so either is fine to pick up
-first. **2026-08-15: #7, #8, and #9 all done** (see their own notes) --
-every item on this list is now closed out, modulo confirming #1's
-"probably already done in substance" call with Daniel:
+#7 and are independent of each other too, so either was fine to pick up
+first. **2026-08-15: #7, #8, and #9 all done** (see their own notes),
+and #1 confirmed done in substance directly with Daniel the same day --
+**every item on this list is closed out**, nothing left outstanding
+from this particular roadmap. Whatever comes next lives further down
+this file (`## Core`, `## Reference patches to adapt`, `## Not yet
+decided / just flagged`) or wherever a fresh conversation with Daniel
+takes it, not as a continuation of this specific list:
 
-1. **Keyboard-only window resize/move.** **Scoped down (2026-08-12)**:
-   not a sway/i3 modal resize-mode after all — Daniel's call was to keep
+1. ~~**Keyboard-only window resize/move.**~~ **Confirmed done in
+   substance (2026-08-15, Daniel).** **Scoped down (2026-08-12)**: not
+   a sway/i3 modal resize-mode after all — Daniel's call was to keep
    the *floating*-window part to "the usual dwl/dwm scheme" (keyboard
    increments/nudges), which is already exactly what `moveresizekb` does
    (done, see below — arrow keys move, shift+arrows resize, fixed pixel
@@ -29,10 +32,7 @@ every item on this list is now closed out, modulo confirming #1's
    and `incnmaster` (window count in master, `mod+i`/`mod+d`) — no
    per-stack-client ratio exists in dwl's simpler fixed master-stack
    model (unlike sway/i3's binary-tree layout), and that's fine, not the
-   goal here. No modal/transient keybinding-state mechanism needed. So:
-   this item may already be *done* in substance — check with Daniel
-   whether anything concrete is still missing before starting more work
-   here, rather than assuming a gap.
+   goal here. No modal/transient keybinding-state mechanism needed.
 2. ~~**Scratchpad.**~~ **Done (2026-08-13)** -- see "Core" below for the
    implementation, and [[wasp-project]] memory for the summary. Only the
    named/spawn-on-first-use flavor, matching spitfire's
