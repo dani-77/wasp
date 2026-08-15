@@ -15,8 +15,9 @@ blur/rounded corners), #8 (touchpad gestures), and #9 (modern
 screen-capture protocol + per-window capture privacy) were queued in
 after, 2026-08-13/14 -- #8 and #9 have no rendering-code dependency on
 #7 and are independent of each other too, so either is fine to pick up
-first. **2026-08-15: #8 and #9 done** (see their own notes) -- #7
-remains, parked at Daniel's explicit call to pick up #9 first:
+first. **2026-08-15: #7, #8, and #9 all done** (see their own notes) --
+every item on this list is now closed out, modulo confirming #1's
+"probably already done in substance" call with Daniel:
 
 1. **Keyboard-only window resize/move.** **Scoped down (2026-08-12)**:
    not a sway/i3 modal resize-mode after all — Daniel's call was to keep
@@ -333,18 +334,10 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
    Hyprland's own rule model were flagged as reference material earlier
    but weren't actually consulted in the end -- mwc/MangoWC's C was closer
    to hand and sufficient on their own.
-7. **Rounded border corners, and blur too.** **In progress (2026-08-15,
-   `scenefx` branch) -- corners done (Stages 0-2), verified nested
-   (border+content rounding, isfullscreen suppression, OPEN/CLOSE
-   `wasp.animations` interaction incl. the CLOSE-tween snapshot staying
-   rounded through the whole shrink). One thing this item's own research
-   below left as an open, unverified-either-way question is now
-   confirmed live: **XWayland clients get rounded corners too** (`xterm`
-   against DISPLAY from wasp's own lazy `wlr_xwayland_create`, screenshot
-   confirmed both border and content rounding, no special-casing needed
-   -- `wlr_scene_buffer_set_corner_radii()`/the border rect's
-   `clipped_region` apply the same regardless of client type). Blur
-   (Stages 3-4) still to come.** Reference for the *feel*:
+7. ~~**Rounded border corners, and blur too.**~~ **Done (2026-08-15,
+   `scenefx` branch)** -- see the full write-up at the end of this item
+   for what was built, the real bugs found along the way, and what got
+   deliberately cut. Reference for the *feel*:
    Daniel's own **spitfire** -- `spitfire.border = { width, active,
    inactive, radius }` (see its `examples/config.lua`), border drawn *on
    top of* the window, radius masks the window's own square corners along
@@ -503,6 +496,99 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
        doesn't get rounded corners" assumption carried over from the
        stale dwl-patches README turns out to matter for wasp's own
        XWayland-enabled build.
+
+   **Built** (2026-08-15, `scenefx` branch, plan-mode approved before
+   implementation, grounded in reading scenefx's own official `tinywl.c`
+   reference line-by-line plus MangoWC's actual border/blur code -- not
+   just this item's own prior paraphrasing of ashwc/fenriz above):
+   `fx_renderer_create()` in place of `wlr_renderer_autocreate()` at
+   both call sites (`setup()` *and* `gpureset()`, the GPU-lost recovery
+   path). `Client.border[4]` (dwm's original 4 flat strip rects)
+   collapsed to a single `Client.border` rect -- sized to the full outer
+   box, positioned/lowered *behind* the content at local `(0, 0)` within
+   `c->scene` (matching wasp's own existing coordinate convention,
+   confirmed correct against MangoWC's own identical positioning, not
+   tinywl's negative-offset demo). `wasp.border.radius` (same table as
+   `width`/`focus`/`normal`, matching spitfire's own `spitfire.border`
+   shape exactly) rounds it via `wlr_scene_rect_set_corner_radii()`,
+   with a rounded hole punched over the content sub-area via
+   `wlr_scene_rect_set_clipped_region()` -- confirmed by reading
+   `tinywl.c`'s `update_border()` line-by-line, not the earlier fuzzy
+   paraphrase of ashwc above. Content itself (`radius_buffer_iter()`,
+   walking `wlr_scene_node_for_each_buffer()`) gets the same radius,
+   popups excluded -- matches both `tinywl.c` and MangoWC's
+   `buffer_set_effect()`. `isfullscreen` forces square corners (matches
+   MangoWC). `wasp.blur = { enable, radius, passes, noise, brightness,
+   contrast, saturation }` (field names matching
+   `wlr_scene_set_blur_data()`'s own parameter list; defaults --
+   5/3/0.02/0.9/0.9/1.1 -- copied from scenefx's own
+   `blur_data_get_default()`) adds per-window blur-behind
+   (`Client.blur`, a `wlr_scene_blur` node lowered below border+content,
+   sized/positioned to the content box, created in `mapnotify()` only
+   if `blur_enable`) and background/wallpaper blur (`Monitor.blur`, one
+   `wlr_scene_optimized_blur` per output, `place_above(LyrBg)` so it
+   blurs the root background/wallpaper layer but not any real window
+   layer above it, sized in `updatemons()` same as `fullscreen_bg`).
+   Both default off (`radius = 0`, `blur.enable = false`), reproducing
+   today's exact rendering bit-for-bit.
+
+   **A real, silent crash found and fixed during this work, not a
+   config issue**: `SCENEFX_LIBS` has to link *before* `WLR_LIBS` in the
+   `Makefile`. scenefx is a drop-in `wlr_scene` replacement, not a
+   separate namespace -- both libraries export the same `wlr_scene_*`
+   symbols, and linking wlroots first resolves those calls into
+   *libwlroots' own* unextended implementation, walking structs scenefx
+   actually allocated with its own larger layout -- a real ABI mismatch,
+   crashing the instant a real client's scene node got touched.
+   Confirmed via gdb, not guessed at. MangoWC's own `meson.build`
+   confirms the same ordering (`libscenefx_dep` listed before
+   `wlroots_dep`).
+
+   **Verified nested**, not just by inspection: rounded border+content
+   on tiled/floating windows; `isfullscreen` suppresses/restores radius
+   correctly; `wasp.animations` OPEN/CLOSE both interact correctly with
+   the new single-rect border, including a rapid-capture screenshot
+   sequence confirming the CLOSE-tween's detached snapshot
+   (`init_closing_client()`, item 3) keeps showing a rounded border
+   through the whole shrink/fade, not just at rest (its `corners`/
+   `clipped_region` are cloned along with width/height/color); per-
+   window blur creation/resize/no-crash confirmed with a translucent
+   test client, including through a CLOSE tween (blur is deliberately
+   *not* cloned into the CLOSE snapshot -- known, low-severity
+   simplification, it just stops instantly instead of fading with the
+   rest, see the code comment in `init_closing_client()`); background
+   blur creation/sizing confirmed crash-free on an empty nested output
+   (genuinely can't visually confirm the blur *effect* itself without a
+   real textured wallpaper -- `swaybg` wasn't installed in the test
+   environment and a flat-color background looks identical blurred or
+   not -- documented as an honest testing limitation, not skipped
+   verification); combined `shield_when_capture` (item 9) + rounded
+   border + blur all active at once during a real whole-output `grim`
+   capture, confirmed the shield still fully covers content while the
+   now-rounded border stays visible around it, no interaction bugs.
+   **XWayland**: confirmed live (`xterm`, DISPLAY discovered via the
+   nested compositor's nested-Xwayland socket at `/tmp/.X11-unix/`,
+   screenshot), gets rounded corners identically to XDG clients, closing
+   this item's own previously-unverified-either-way question, not left
+   as an assumption.
+
+   **Deliberately not ported**: drop shadows (not in this item's own
+   title, meaningfully more code than corners+blur alone -- MangoWC's
+   own shadow-clipping-against-monitor-edges logic is ~80 lines by
+   itself -- clean, separable follow-up). ashwc's position-checked
+   "only a buffer's true outer corners get rounded" refinement -- v1
+   applies one uniform radius to every non-popup buffer under a client,
+   matching MangoWC's own simpler approach (confirmed it doesn't
+   special-case this either); could in principle show a rounded corner
+   on an inner subsurface positioned exactly at a client's own corner,
+   an unusual layout in practice. Client-negotiated blur regions
+   (`ext-background-effect-v1`/`kde-blur`, fenriz's own idea) --
+   orthogonal enhancement, not a v1 blocker. Per-`wasp.rules` radius/blur
+   overrides -- one global on/off + global params for v1, same "small
+   first version" call already made for `wasp.animations`.
+   `no_radius_when_single` (MangoWC's smart-corner-suppression toggle,
+   thematically close to `wasp.gaps.smart`) -- cheap, natural follow-up,
+   not committed to v1.
 
 8. ~~**Touchpad gestures.**~~ **Done (2026-08-15)** -- see below for the
    real implementation; research trail from 2026-08-14 kept as-is

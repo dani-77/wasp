@@ -201,6 +201,12 @@ typedef struct {
 	 * already assumes this (animations, item 9's sync_shield()) needs
 	 * to change). */
 	struct wlr_scene_rect *border;
+	/* wasp: per-window blur-behind (wasp.blur.enable, NOTES.md item 7) --
+	 * NULL unless blur_enable, lowered below both border and content so
+	 * they render on top of the blurred backdrop it shows through any
+	 * transparency in either. Sized/positioned/rounded in lockstep with
+	 * the border/content in apply_client_geom(). */
+	struct wlr_scene_blur *blur;
 	struct wlr_scene_tree *scene_surface;
 	struct wl_list link;
 	struct wl_list flink;
@@ -316,6 +322,15 @@ struct Monitor {
 	struct wlr_scene_output *scene_output;
 	struct wlr_scene_buffer *scene_buffer; /* bar buffer */
 	struct wlr_scene_rect *fullscreen_bg; /* See createmon() for info */
+	/* wasp: background/wallpaper blur (wasp.blur.enable, NOTES.md item
+	 * 7) -- one wlr_scene_optimized_blur per output, NULL unless
+	 * blur_enable. Blurs everything below it in the scene (the
+	 * wallpaper/root background, same "optimized" pre-blurred-backdrop
+	 * idea ashwc/MangoWC both use), sized to the output in
+	 * createmon()/updatemons(). Separate mechanism from a per-window
+	 * Client.blur -- that one blurs what's *behind a specific client*;
+	 * this blurs the desktop itself. */
+	struct wlr_scene_optimized_blur *blur;
 	struct wl_listener frame;
 	struct wl_listener destroy;
 	struct wl_listener request_state;
@@ -1166,6 +1181,17 @@ apply_client_geom(Client *c, struct wlr_box vis)
 	});
 	wlr_scene_node_for_each_buffer(&c->scene_surface->node, radius_buffer_iter, &radii);
 
+	/* wasp: per-window blur-behind (wasp.blur.enable, NOTES.md item 7) --
+	 * same box/position/radii as the content itself (c->scene_surface),
+	 * not the border-inclusive outer box -- it's meant to show through
+	 * the content's own transparency, not sit under the border strip. */
+	if (c->blur) {
+		wlr_scene_node_set_position(&c->blur->node, (int)c->bw, (int)c->bw);
+		wlr_scene_blur_set_size(c->blur,
+				vis.width - 2 * (int)c->bw, vis.height - 2 * (int)c->bw);
+		wlr_scene_blur_set_corner_radii(c->blur, radii);
+	}
+
 	client_get_clip(c, &clip);
 	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
 
@@ -1580,6 +1606,13 @@ init_closing_client(Client *c)
 	wlr_scene_node_set_position(&r->node, c->border->node.x, c->border->node.y);
 	wlr_scene_rect_set_corner_radii(r, c->border->corners);
 	wlr_scene_rect_set_clipped_region(r, c->border->clipped_region);
+	/* c->blur (wasp.blur.enable) is deliberately NOT cloned here -- a
+	 * blurred window's blur-behind just stops instantly at the moment
+	 * it starts closing instead of shrinking/fading along with the rest
+	 * of the CLOSE tween. A known, low-severity v1 simplification
+	 * (confirmed live: no crash, no corruption, just an early cutoff of
+	 * one visual layer) -- revisit only if it turns out to actually
+	 * bother anyone in practice. */
 
 	cc->from = c->geom;
 	cc->to = !strcmp(animtype_close, "zoom") ? zoom_box(c->geom, animzoom_ratio) : c->geom;
@@ -2156,6 +2189,8 @@ cleanupmon(struct wl_listener *listener, void *data)
 
 	closemon(m);
 	wlr_scene_node_destroy(&m->fullscreen_bg->node);
+	if (m->blur)
+		wlr_scene_node_destroy(&m->blur->node);
 	wlr_scene_node_destroy(&m->scene_buffer->node);
 
 	if (m->ext_workspaces) {
@@ -2572,6 +2607,20 @@ createmon(struct wl_listener *listener, void *data)
 	/* updatemons() will resize and set correct position */
 	m->fullscreen_bg = wlr_scene_rect_create(layers[LyrFS], 0, 0, fullscreen_bg);
 	wlr_scene_node_set_enabled(&m->fullscreen_bg->node, 0);
+
+	/* wasp: background/wallpaper blur (wasp.blur.enable, NOTES.md item
+	 * 7) -- a root-level sibling of layers[], not a child of any one of
+	 * them (optimized_blur blurs whatever's behind/below its own node
+	 * in the scene, it isn't itself layer content). place_above(LyrBg)
+	 * so it sits right over the wallpaper/root background but under
+	 * every real window layer (LyrBottom and up) -- those get blurred
+	 * *if* they're translucent and have their own per-window
+	 * Client.blur, a separate mechanism, not this one.
+	 * updatemons() sizes/positions it, same as fullscreen_bg above. */
+	if (blur_enable) {
+		m->blur = wlr_scene_optimized_blur_create(&scene->tree, 0, 0);
+		wlr_scene_node_place_above(&m->blur->node, &layers[LyrBg]->node);
+	}
 
 	/* Adds this to the output layout in the order it was configured.
 	 *
@@ -3481,6 +3530,16 @@ mapnotify(struct wl_listener *listener, void *data)
 	c->border->node.data = c;
 	wlr_scene_node_lower_to_bottom(&c->border->node);
 
+	/* wasp: per-window blur-behind (wasp.blur.enable, NOTES.md item 7) --
+	 * lowered below the border (just created above), which is itself
+	 * already below content -- render order bottom to top ends up
+	 * blur, border, content. apply_client_geom() sizes/positions/rounds
+	 * it from here on. */
+	if (blur_enable) {
+		c->blur = wlr_scene_blur_create(c->scene, 0, 0);
+		wlr_scene_node_lower_to_bottom(&c->blur->node);
+	}
+
 	/* wasp: modern screen-capture protocol + per-window capture privacy
 	 * (NOTES.md item 9). shield is a plain opaque rect, disabled until
 	 * sync_shield() has a reason to show it -- not theme-colored on
@@ -3980,7 +4039,16 @@ reload(const Arg *arg)
 	 * already walks the live keys[]/nkeys globals on every keypress.
 	 * NOT yet live: border *width* on already-mapped clients (would need
 	 * a resize()/geometry recompute per client, not just a color swap) --
-	 * see NOTES.md. Also live: wasp.monitors' `scale` (see below), though
+	 * see NOTES.md. wasp.border.radius is the same story (picked up by
+	 * the next real geometry write any given client happens to get, not
+	 * forced immediately) -- and wasp.blur.enable flipping on/off only
+	 * affects clients mapped *after* the reload, since the blur node
+	 * itself is only ever created in mapnotify(), not retrofitted onto
+	 * an already-open client. wasp.blur's *look* parameters
+	 * (radius/passes/noise/...) genuinely are live for any blur node
+	 * that already exists, via the wlr_scene_set_blur_data() call below
+	 * -- global scene-wide state, not per-client. Also live:
+	 * wasp.monitors' `scale` (see below), though
 	 * not the rest of a monrules[] entry -- mfact/nmaster/layout/
 	 * transform/x/y stay createmon()-time-only, same as they always
 	 * were. */
@@ -4007,6 +4075,9 @@ reload(const Arg *arg)
 
 	if (root_bg)
 		wlr_scene_rect_set_color(root_bg, rootcolor);
+
+	wlr_scene_set_blur_data(scene, (int)blur_passes, (int)blur_radius,
+			blur_noise, blur_brightness, blur_contrast, blur_saturation);
 
 	wl_list_for_each(c, &clients, link) {
 		if (c->isurgent)
@@ -4414,6 +4485,15 @@ setup(void)
 
 	/* Initialize the scene graph used to lay out windows */
 	scene = wlr_scene_create();
+	/* wasp: global blur look parameters (wasp.blur, NOTES.md item 7) --
+	 * not per-window, matches scenefx's own API shape; individual
+	 * client/output blur nodes (mapnotify()/createmon()) just toggle
+	 * whether blur happens at all, not how it looks. Harmless to set
+	 * even with blur_enable off -- no node ever samples these values
+	 * without a blur node to sample them for. Re-applied on hot-reload
+	 * too, see reload(). */
+	wlr_scene_set_blur_data(scene, (int)blur_passes, (int)blur_radius,
+			blur_noise, blur_brightness, blur_contrast, blur_saturation);
 	root_bg = wlr_scene_rect_create(&scene->tree, 0, 0, rootcolor);
 	for (i = 0; i < NUM_LAYERS; i++)
 		layers[i] = wlr_scene_tree_create(&scene->tree);
@@ -5166,6 +5246,14 @@ updatemons(struct wl_listener *listener, void *data)
 
 		wlr_scene_node_set_position(&m->fullscreen_bg->node, m->m.x, m->m.y);
 		wlr_scene_rect_set_size(m->fullscreen_bg, m->m.width, m->m.height);
+
+		/* wasp: background blur (wasp.blur.enable, NOTES.md item 7) --
+		 * sized/positioned to exactly this output's own box, same
+		 * pattern as fullscreen_bg right above. */
+		if (m->blur) {
+			wlr_scene_node_set_position(&m->blur->node, m->m.x, m->m.y);
+			wlr_scene_optimized_blur_set_size(m->blur, m->m.width, m->m.height);
+		}
 
 		if (m->lock_surface) {
 			struct wlr_scene_tree *scene_tree = m->lock_surface->surface->data;

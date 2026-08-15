@@ -145,8 +145,18 @@ working:
   *output* capture with a client-side crop under the hood, so a visible
   `shield_when_capture` window elsewhere on that output still shields
   even if the selected region never touches it.
+- **Rounded corners + blur**: via [SceneFX](https://github.com/wlrfx/scenefx),
+  a drop-in replacement for wlroots' own scene API — `wasp.border.radius`
+  (same table as `width`/`focus`/`normal`, matching spitfire's own
+  `spitfire.border.radius`) rounds both the border and window content
+  (fullscreen always forces square corners); `wasp.blur = { enable,
+  radius, passes, noise, brightness, contrast, saturation }` adds both
+  background/wallpaper blur and per-window blur-behind (through a
+  translucent window's own transparency). Both default off, reproducing
+  today's exact rendering bit-for-bit. Verified against XWayland clients
+  too, not just XDG — same rounding, no gap.
 
-Not done yet: mouse-drag resize variety and more border styles. The full
+Not done yet: mouse-drag resize variety and drop shadows. The full
 running list, plus which [dwl-patches] are earmarked for which feature and
 why, lives in [`NOTES.md`](NOTES.md) — that's the file to check for current
 plans, not this README.
@@ -160,6 +170,10 @@ Same dependencies as upstream dwl, plus Lua 5.4:
 - fcft, pixman, tllist (for the bar)
 - **lua5.4** (development headers — e.g. `lua54-devel` on Void Linux)
 - libxcb, libxcb-wm (XWayland — see below)
+- **[scenefx](https://github.com/wlrfx/scenefx) 0.5**, built against
+  wasp's exact wlroots 0.20 — genuinely new dependency, backs rounded
+  corners + blur (see above). Package name/pkg-config module is
+  `scenefx-0.5`, same versioned convention wlroots itself uses.
 
 `make` also builds `wasp-list-windows` (see Modern screen-capture
 protocol above) — a plain Wayland *client*, needs `wayland-client`'s

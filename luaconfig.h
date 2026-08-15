@@ -94,6 +94,14 @@ extern float animzoom_ratio, animfade_from_opacity;
 extern const char *animtag_direction;
 extern struct wasp_bezier animbz_move, animbz_open, animbz_close, animbz_tag;
 
+/* wasp.blur = { enable, radius, passes, noise, brightness, contrast,
+ * saturation }, see NOTES.md item 7 -- field names match
+ * wlr_scene_set_blur_data()'s own parameter list. enable = false (the
+ * default) reproduces today's exact rendering. */
+extern int blur_enable;
+extern unsigned int blur_radius, blur_passes;
+extern float blur_noise, blur_brightness, blur_contrast, blur_saturation;
+
 /* Bakes animbz_* into wasp.c's per-action easing lookup tables. Defined in
  * wasp.c (not luaconfig.c) since it's wasp.c's own ease()/animate_client()
  * that consume the tables; called at the end of load_animations() so a

@@ -47,6 +47,11 @@ const char *animtype_open, *animtype_close;
 float animzoom_ratio, animfade_from_opacity;
 const char *animtag_direction;
 struct wasp_bezier animbz_move, animbz_open, animbz_close, animbz_tag;
+/* wasp.blur, see NOTES.md item 7 -- field names match
+ * wlr_scene_set_blur_data()'s own parameter list. */
+int blur_enable;
+unsigned int blur_radius, blur_passes;
+float blur_noise, blur_brightness, blur_contrast, blur_saturation;
 const char ***autostart;
 size_t nautostart;
 Scratchpad *scratchpads;
@@ -170,6 +175,13 @@ set_defaults(void)
 	init_anim_curves(); /* bake the defaults now -- ease() (wasp.c) always
 	                      * needs a valid table, even if config.lua is
 	                      * missing/broken and load_animations() never runs */
+	blur_enable = 0; /* off by default -- reproduces today's exact rendering */
+	blur_radius = 5;
+	blur_passes = 3;
+	blur_noise = 0.02f;
+	blur_brightness = 0.9f;
+	blur_contrast = 0.9f;
+	blur_saturation = 1.1f; /* same defaults scenefx's own blur_data_get_default() picks */
 	autostart = NULL; /* re-parsed data only -- doesn't touch already-spawned
 	                    * processes, see autostartexec()/reload() in wasp.c */
 	nautostart = 0;
@@ -435,6 +447,32 @@ load_animations(lua_State *L, int wasptbl)
 	read_bezier_field(L, t, "curve_tag", &animbz_tag);
 	lua_pop(L, 1);
 	init_anim_curves();
+}
+
+/* wasp.blur = { enable, radius, passes, noise, brightness, contrast,
+ * saturation } -- NOTES.md item 7. Field names match
+ * wlr_scene_set_blur_data()'s own parameter list. enable = false (the
+ * default) reproduces today's exact rendering, no blur node ever
+ * created -- see mapnotify()/createmon() in wasp.c. */
+static void
+load_blur(lua_State *L, int wasptbl)
+{
+	int t;
+
+	lua_getfield(L, wasptbl, "blur");
+	if (!lua_istable(L, -1)) {
+		lua_pop(L, 1);
+		return;
+	}
+	t = lua_gettop(L);
+	read_bool_field(L, t, "enable", &blur_enable);
+	read_int_field(L, t, "radius", &blur_radius);
+	read_int_field(L, t, "passes", &blur_passes);
+	read_float_field(L, t, "noise", &blur_noise);
+	read_float_field(L, t, "brightness", &blur_brightness);
+	read_float_field(L, t, "contrast", &blur_contrast);
+	read_float_field(L, t, "saturation", &blur_saturation);
+	lua_pop(L, 1);
 }
 
 /* wasp.keyboard = { layout=, variant=, model=, options=, rules=,
@@ -1218,6 +1256,7 @@ waspconfig_load(void)
 		load_background(L, wasptbl);
 		load_gaps(L, wasptbl);
 		load_animations(L, wasptbl);
+		load_blur(L, wasptbl);
 		load_keyboard(L, wasptbl);
 		load_modkey(L, wasptbl);       /* before load_keys(): "mod" resolution */
 		load_terminal_menu(L, wasptbl); /* before load_keys(): spawn-terminal/-menu */

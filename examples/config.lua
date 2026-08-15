@@ -2,11 +2,11 @@
 --   mkdir -p ~/.config/wasp && cp examples/config.lua ~/.config/wasp/config.lua
 --
 -- Appearance, terminal/menu, keybindings, keyboard, gaps, monitors/output
--- scale, autostart, named scratchpads, window rules, and open/close/move/
--- tag-switch animations are all wired up here -- and your workspaces show
--- up in any ext-workspace-v1-aware bar/shell for free, no config needed
--- for that part. See NOTES.md for what's still coming (rounded
--- corners/blur).
+-- scale, autostart, named scratchpads, window rules, rounded corners +
+-- blur, and open/close/move/tag-switch animations are all wired up here
+-- -- and your workspaces show up in any ext-workspace-v1-aware bar/shell
+-- for free, no config needed for that part. See NOTES.md for what's
+-- still coming.
 
 wasp = {}
 
@@ -14,6 +14,32 @@ wasp.border = {
   width = 2,
   focus = "#7aa2f7",  -- focused window border
   normal = "#414868", -- unfocused window border
+  radius = 0, -- rounded corners, in pixels -- 0 (the default) is square,
+              -- same as upstream dwl; matches spitfire's own
+              -- spitfire.border.radius. Fullscreen windows always get
+              -- square corners regardless of this. See NOTES.md item 7.
+}
+
+-- Rounded corners' blurrier sibling -- background/wallpaper blur (behind
+-- everything) and per-window blur-behind (through a translucent window's
+-- own transparency), both via scenefx. enable = false (the default)
+-- reproduces today's exact rendering, no blur node ever created.
+-- radius/passes/noise/brightness/contrast/saturation are scenefx's own
+-- global look parameters (same names as wlr_scene_set_blur_data()'s
+-- arguments) -- not per-window, one look for the whole session. Picked
+-- up live on hot-reload for any blur node that already exists;
+-- enable itself flipping on/off only affects windows mapped *after* the
+-- reload (see NOTES.md item 7's own note on this). Global only for now
+-- -- no wasp.rules override yet, same "one global on/off" scoping
+-- wasp.animations started with too.
+wasp.blur = {
+  enable = false,
+  radius = 5,
+  passes = 3,
+  noise = 0.02,
+  brightness = 0.9,
+  contrast = 0.9,
+  saturation = 1.1,
 }
 
 -- Gaps between/around tiled windows (tile/monocle/dwindle; floating is
@@ -363,15 +389,20 @@ bind({ "mod", "shift" }, "c", "killclient")
 bind({ "mod", "shift" }, "q", "quit")
 
 -- Hot-reload -- re-reads this file and re-applies gaps, wasp.animations
--- (including re-baking the curve_* easing tables), the bar's
--- visibility/position/colors, every window's border color, the
--- background, keyboard layout/repeat speed, wasp.monitors' `scale` (only
--- that one field -- mfact/nmaster/layout/transform/x/y stay startup-time
--- only, same as they always were), and keybindings themselves, all live,
--- no restart. Border *width* on already-open windows and wasp.autostart
--- are the two things that still need a restart to pick up (autostart
--- deliberately only ever runs once, at real startup -- see NOTES.md;
--- otherwise every reload would relaunch everything in it).
+-- (including re-baking the curve_* easing tables), wasp.blur's look
+-- parameters (radius/passes/noise/...) for any blur node that already
+-- exists, the bar's visibility/position/colors, every window's border
+-- color, the background, keyboard layout/repeat speed, wasp.monitors'
+-- `scale` (only that one field -- mfact/nmaster/layout/transform/x/y
+-- stay startup-time only, same as they always were), and keybindings
+-- themselves, all live, no restart. Border *width*/`radius` on already-
+-- open windows (picked up by that window's own next real geometry
+-- change, not forced immediately), wasp.blur.enable flipping on/off
+-- (only affects windows/outputs from that point on, not retroactively),
+-- and wasp.autostart are what still need a restart -- or just a bit of
+-- patience for the first two -- to fully take effect everywhere
+-- (autostart deliberately only ever runs once, at real startup -- see
+-- NOTES.md; otherwise every reload would relaunch everything in it).
 bind({ "mod", "shift" }, "r", "reload")
 
 -- VT switching (Ctrl-Alt-Fx) and Ctrl-Alt-Backspace, same as upstream dwl
