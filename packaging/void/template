@@ -1,9 +1,4 @@
 # Template file for 'wasp'
-#
-# This is a reference copy -- the template xbps-src actually builds
-# from lives in a separate package collection (Daniel's d77void-pkgs
-# repo, srcpkgs/wasp/template), kept in sync with this one by hand.
-# See doc/DEVELOPMENT.md's Building section.
 pkgname=wasp
 version=0.9.0
 revision=1
@@ -20,7 +15,7 @@ license="GPL-3.0-or-later, MIT"
 homepage="https://github.com/dani-77/wasp"
 changelog="https://github.com/dani-77/wasp/releases/tag/v${version}"
 distfiles="https://github.com/dani-77/wasp/archive/refs/tags/v${version}.tar.gz"
-checksum=0000000000000000000000000000000000000000000000000000000000000000
+checksum=11624e9f69a47f150fbde18620d1ab606709e1680ea0dd27f293fb380539e3f6
 repository=d77
 
 do_install() {

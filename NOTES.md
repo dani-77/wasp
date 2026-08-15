@@ -853,6 +853,37 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
    output straight into `grim -T` captures the unflagged one and is
    refused (cleanly, no crash) for the flagged one.
 
+**Roadmap closed out, 2026-08-15**: with all 9 items above done, shipped
+a `v0.9.0` tag + GitHub Release, and made the repo presentable to
+someone who isn't Daniel:
+- `README.md` rewritten end-user-facing (features, install, quickstart
+  config) -- no longer leads with "fork of dwl" (Daniel's own steer:
+  wasp's grown well past what dwl provides on its own; the fork
+  lineage is still credited, just not the headline).
+- Today's dev-log-style README (the full feature/verification trail,
+  build detail) moved to `doc/DEVELOPMENT.md`, meant to be read
+  alongside this file.
+- `packaging/void/template` -- a reference copy of the Void Linux
+  `xbps-src` template (authoritative copy in Daniel's separate
+  `d77void-pkgs` repository, `srcpkgs/wasp/template`, kept in sync by
+  hand), modeled on the existing `dwl`/`mango` templates there.
+- **Found along the way, not assumed**: the `dani-77/wasp` GitHub repo
+  was still *private* -- confirmed via `gh repo view`, then confirmed
+  the practical consequence live (the template's own `distfiles=` URL,
+  `archive/refs/tags/v0.9.0.tar.gz`, 404'd on a plain anonymous
+  `curl`, even though the tag/release existed and `gh`'s own
+  *authenticated* API could fetch the tarball fine). A private repo
+  can't back a normal package's `distfiles=` at all -- no anonymous
+  fetch mechanism xbps-src (or any standard package builder) expects
+  supports it for an arbitrary URL. Confirmed with Daniel, then made
+  the repo public (`gh repo edit --visibility public`); re-verified
+  the same URL now returns 200 and computed the template's real
+  `checksum=` from *that* download, not from the earlier authenticated
+  one (the two are NOT the same tarball byte-for-byte -- confirmed by
+  comparing checksums: GitHub's authenticated tarball API and its
+  public `archive/refs/tags/` codeload path package the same commit
+  differently).
+
 ## Core (not patch-derived)
 - **Lua config, live-reloadable — done (2026-08-12), bound-key trigger**:
   `wasp.c`'s `reload()` action (default bind: `mod+shift+r`, see
