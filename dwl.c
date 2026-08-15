@@ -487,6 +487,9 @@ static void setup(void);
 static void spawn(const Arg *arg);
 static void startdrag(struct wl_listener *listener, void *data);
 static int statusin(int fd, unsigned int mask, void *data);
+static void swipebegin(struct wl_listener *listener, void *data);
+static void swipeend(struct wl_listener *listener, void *data);
+static void swipeupdate(struct wl_listener *listener, void *data);
 static void tag(const Arg *arg);
 static void tagmon(const Arg *arg);
 static void tile(Monitor *m);
@@ -576,6 +579,12 @@ static struct wlr_pointer_constraint_v1 *active_constraint;
 static struct wlr_cursor *cursor;
 static struct wlr_xcursor_manager *cursor_mgr;
 
+/* Touchpad swipe gesture state -- accumulated across swipe_update events
+ * between a swipe_begin and its matching swipe_end, then classified by
+ * dominant axis + sign in swipeend(). See NOTES.md item 8. */
+static double gesture_dx, gesture_dy;
+static uint32_t gesture_fingers;
+
 static struct wlr_scene_rect *root_bg;
 static struct wlr_session_lock_manager_v1 *session_lock_mgr;
 static struct wlr_scene_rect *locked_bg;
@@ -607,6 +616,9 @@ static struct wl_listener cursor_button = {.notify = buttonpress};
 static struct wl_listener cursor_frame = {.notify = cursorframe};
 static struct wl_listener cursor_motion = {.notify = motionrelative};
 static struct wl_listener cursor_motion_absolute = {.notify = motionabsolute};
+static struct wl_listener cursor_swipe_begin = {.notify = swipebegin};
+static struct wl_listener cursor_swipe_update = {.notify = swipeupdate};
+static struct wl_listener cursor_swipe_end = {.notify = swipeend};
 static struct wl_listener gpu_reset = {.notify = gpureset};
 static struct wl_listener layout_change = {.notify = updatemons};
 static struct wl_listener new_idle_inhibitor = {.notify = createidleinhibitor};
@@ -1903,6 +1915,9 @@ cleanuplisteners(void)
 	wl_list_remove(&cursor_frame.link);
 	wl_list_remove(&cursor_motion.link);
 	wl_list_remove(&cursor_motion_absolute.link);
+	wl_list_remove(&cursor_swipe_begin.link);
+	wl_list_remove(&cursor_swipe_update.link);
+	wl_list_remove(&cursor_swipe_end.link);
 	wl_list_remove(&gpu_reset.link);
 	wl_list_remove(&new_idle_inhibitor.link);
 	wl_list_remove(&layout_change.link);
@@ -4243,6 +4258,9 @@ setup(void)
 	wl_signal_add(&cursor->events.button, &cursor_button);
 	wl_signal_add(&cursor->events.axis, &cursor_axis);
 	wl_signal_add(&cursor->events.frame, &cursor_frame);
+	wl_signal_add(&cursor->events.swipe_begin, &cursor_swipe_begin);
+	wl_signal_add(&cursor->events.swipe_update, &cursor_swipe_update);
+	wl_signal_add(&cursor->events.swipe_end, &cursor_swipe_end);
 
 	cursor_shape_mgr = wlr_cursor_shape_manager_v1_create(dpy, 1);
 	wl_signal_add(&cursor_shape_mgr->events.request_set_shape, &request_set_cursor_shape);
@@ -4352,6 +4370,64 @@ statusin(int fd, unsigned int mask, void *data)
 	drawbars();
 
 	return 0;
+}
+
+/* Touchpad swipe gestures -- see NOTES.md item 8. wlr_cursor rebroadcasts
+ * every attached wlr_pointer's own swipe_begin/update/end events (same as
+ * it already does for motion/button/axis), so these hang off `cursor`
+ * itself rather than needing a per-device listener the way createpointer()
+ * handles libinput config -- one set of listeners, wired once in setup(),
+ * covers every touchpad. Pinch/hold aren't handled -- no config surface
+ * asks for them yet, and wlr_cursor rebroadcasts those the same way if
+ * ever wanted. */
+void
+swipebegin(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_swipe_begin_event *event = data;
+
+	gesture_dx = 0;
+	gesture_dy = 0;
+	gesture_fingers = event->fingers;
+}
+
+void
+swipeupdate(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_swipe_update_event *event = data;
+
+	gesture_dx += event->dx;
+	gesture_dy += event->dy;
+}
+
+/* Classifies the finished gesture by its dominant axis, then sign (matches
+ * ashwc's own classify-on-end shape, see NOTES.md item 8), and dispatches
+ * through the same wasp.keys action/arg machinery -- gestures[]/ngestures
+ * are built by luaconfig.c's load_gestures() exactly like keys[]/nkeys are
+ * for keybinding(). A cancelled gesture (compositor took over, e.g. an
+ * edge-swipe some other protocol claimed) fires nothing. */
+void
+swipeend(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_swipe_end_event *event = data;
+	const char *direction;
+	size_t gi;
+
+	if (event->cancelled)
+		return;
+
+	direction = fabs(gesture_dx) > fabs(gesture_dy)
+		? (gesture_dx < 0 ? "left" : "right")
+		: (gesture_dy < 0 ? "up" : "down");
+
+	for (gi = 0; gi < ngestures; gi++) {
+		const Gesture *g = &gestures[gi];
+		if ((g->fingers == 0 || (uint32_t)g->fingers == gesture_fingers)
+				&& g->direction && !strcmp(g->direction, direction)
+				&& g->func) {
+			g->func(&g->arg);
+			return;
+		}
+	}
 }
 
 void

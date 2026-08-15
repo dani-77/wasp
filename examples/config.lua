@@ -346,3 +346,19 @@ for vt = 1, 12 do
   bind({ "ctrl", "alt" }, "XF86Switch_VT_" .. vt, "chvt", { vt = vt })
 end
 bind({ "ctrl", "alt" }, "Terminate_Server", "quit")
+
+-- Touchpad gestures --------------------------------------------------
+-- { fingers = <count, omit/0 = any>, direction = "left"|"right"|"up"|"down",
+--   action = "...", <action-specific fields> } -- same action table as
+-- wasp.keys above (spawn/view/tag/focusmon/... all work here too, with the
+-- same fields). `direction` is classified from the swipe's dominant axis
+-- once it ends, so a mostly-horizontal swipe always resolves to left/right
+-- even if it wasn't perfectly straight. Only swipe gestures exist right now
+-- (no pinch/hold) -- see NOTES.md item 8.
+wasp.gestures = {
+  -- 3-finger swipe left/right between monitors, 4-finger up/down for
+  -- fullscreen toggle -- uncomment and adjust finger counts to taste.
+  -- { fingers = 3, direction = "left",  action = "focusmon", dir = "left" },
+  -- { fingers = 3, direction = "right", action = "focusmon", dir = "right" },
+  -- { fingers = 4, direction = "up",    action = "togglefullscreen" },
+}

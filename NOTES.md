@@ -15,7 +15,8 @@ blur/rounded corners), #8 (touchpad gestures), and #9 (modern
 screen-capture protocol + per-window capture privacy) were queued in
 after, 2026-08-13/14 -- #8 and #9 have no rendering-code dependency on
 #7 and are independent of each other too, so either is fine to pick up
-first:
+first. **2026-08-15: #8 done** (see its own note) -- #7 and #9 remain,
+still independent of each other:
 
 1. **Keyboard-only window resize/move.** **Scoped down (2026-08-12)**:
    not a sway/i3 modal resize-mode after all — Daniel's call was to keep
@@ -492,7 +493,9 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
        stale dwl-patches README turns out to matter for wasp's own
        XWayland-enabled build.
 
-8. **Touchpad gestures.** (2026-08-14, researched via ashwc after Daniel
+8. ~~**Touchpad gestures.**~~ **Done (2026-08-15)** -- see below for the
+   real implementation; research trail from 2026-08-14 kept as-is
+   underneath. (2026-08-14, researched via ashwc after Daniel
    asked whether it'd be easy) -- wasp has no gesture code at all today
    (`dwl.c` has zero `events.swipe_*`/`pinch_*` listeners), but wlroots
    already delivers swipe/pinch off the very same `wlr_pointer` wasp
@@ -527,6 +530,68 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
    `luaconfig.c` load pattern as `wasp.rules`/`wasp.scratchpad`. No new
    dependency either -- libinput/wlroots already deliver the events wasp
    would just start listening for.
+
+   **Real implementation (2026-08-15)**, one real deviation from ashwc's
+   own shape found while wiring it up: ashwc listens on each
+   `wlr_pointer`'s own `events.swipe_begin/update/end` directly (per-device
+   listeners, set up in its `pointer.c` alongside libinput config). wasp's
+   `createpointer()` does the same libinput config, but never keeps a
+   listener struct per device -- instead, checking `wlr_cursor.h` showed
+   `wlr_cursor` itself *rebroadcasts* swipe/pinch/hold, exactly the same
+   way it already rebroadcasts `motion`/`button`/`axis`/`frame` off every
+   attached pointer. So this landed as three more `wl_signal_add()` calls
+   on the shared `cursor` object right next to the existing
+   motion/button/axis/frame ones in `setup()`, not per-device listeners --
+   simpler than ashwc's own approach, one registration covers every
+   touchpad/mouse wasp ever attaches, nothing extra needed in
+   `createpointer()` itself. `cursor_swipe_begin/update/end` static
+   listeners, removed in `cleanuplisteners()` same as the others.
+
+   `swipebegin()`/`swipeupdate()`/`swipeend()` (`dwl.c`, alphabetically
+   between `statusin()` and `tag()`) match ashwc's own classify-on-end
+   shape almost exactly: a `(gesture_dx, gesture_dy)` accumulator reset at
+   swipe_begin (also stashing `fingers`), summed at each swipe_update,
+   classified by dominant axis then sign at swipe_end -- `fabs(dx) >
+   fabs(dy)` ? left/right : up/down, same formula. A `cancelled` swipe_end
+   (compositor/another protocol claimed the gesture, e.g. an edge-swipe)
+   fires nothing.
+
+   Dispatch reuses `wasp.keys`' own action/arg machinery outright rather
+   than building a parallel one, per the plan above: new `Gesture` struct
+   (`luaconfig.h`, `{fingers, direction, func, arg}`) and `wasp.gestures`
+   array (`luaconfig.c`'s `load_gestures()`, modeled on `load_rules()`)
+   call `wasp_lookup_action()` for `action` and `build_key_arg()` --
+   *verbatim*, not a copy -- for the rest of the entry's fields, since
+   `build_key_arg(L, e, action)` was already generic over any Lua table on
+   the stack, not `wasp.keys`-specific. `direction` is validated against a
+   fixed 4-string table at load time (invalid/missing -> entry silently
+   skipped, same leniency as an unknown `wasp.keys` action); `fingers`
+   defaults to 0 ("any count") if omitted. An empty/missing
+   `wasp.gestures` is a safe default, same as `wasp.rules` -- swipes just
+   do nothing. Pinch/hold genuinely aren't wired up, matching the
+   scoped-down plan above (`wlr_cursor` rebroadcasts those too if ever
+   wanted, same mechanism).
+
+   **Verified**: clean build, same flags as every other item in this file
+   (`-Wpedantic -Wall -Wextra -Wdeclaration-after-statement -Wshadow
+   -Wfloat-conversion`, no new warnings) -- had to install
+   `wlroots0.20-devel`/`scenefx` build deps fresh in this sandbox first
+   (weren't present going in). **Narrower than this file's other "Verified"
+   claims, worth being explicit about**: confirmed wasp starts, creates a
+   real nested output, and shuts down cleanly through the new listener
+   code (`WLR_BACKENDS=x11` nested session on Daniel's live desktop,
+   `xwininfo`-confirmed real window, screenshot taken, killed via SIGTERM,
+   no crash, no leftover process) -- but *not* a real swipe gesture firing
+   an action end-to-end. No touchpad hardware and no gesture-injection
+   tool (`wlrctl` isn't installed in this environment, and its own gesture-
+   synthesis support is unconfirmed either way) were available to actually
+   trigger `swipe_begin/update/end` from outside, unlike the animations
+   work's `wlrctl`-driven keypress tests. The direction-classification math
+   and the dispatch loop were read/reasoned through carefully and mirror
+   ashwc's own confirmed-working formula, but that's inspection-level
+   confidence, not the live-reproduction bar the rest of this file holds
+   itself to -- worth an actual touchpad test on real hardware before
+   fully trusting this.
 
 9. **Modern screen-capture protocol (`ext-image-copy-capture-v1`) +
    per-window capture privacy.** (2026-08-14, researched via MangoWC

@@ -54,6 +54,8 @@ Rule *rules;
 size_t nrules;
 MonitorRule *monrules;
 size_t nmonrules;
+Gesture *gestures;
+size_t ngestures;
 
 /* Primary modifier for config.lua keybinds that say mods = {"mod", ...} --
  * set via wasp.modkey ("alt"/"ctrl"/"super"/"shift"), defaults to Alt (what
@@ -189,6 +191,10 @@ set_defaults(void)
 	                               * layout, which is a real footgun, so this
 	                               * one does get an emergency fallback. */
 	nmonrules = 1;
+	gestures = NULL; /* no gestures is a perfectly safe default, same
+	                   * reasoning as rules above -- swipes just do nothing
+	                   * until wasp.gestures configures some. */
+	ngestures = 0;
 }
 
 /* ~/.config/wasp/config.lua, or $XDG_CONFIG_HOME/wasp/config.lua if set.
@@ -1085,6 +1091,99 @@ load_keys(lua_State *L, int wasptbl)
 	}
 }
 
+/* wasp.gestures = { { fingers = 3, direction = "left", action = "focusmon",
+ *                     dir = "left" }, ... } -- see Gesture in luaconfig.h.
+ * `direction` must be one of "left"/"right"/"up"/"down" (anything else
+ * leaves the entry with direction = NULL, which dwl.c's swipeend() never
+ * matches -- silently inert, same leniency as an unknown wasp.keys action).
+ * `fingers` defaults to 0 ("any") if omitted or not a number. Reuses
+ * build_key_arg() verbatim for the action's own arg -- a gesture entry's
+ * extra fields (`tag`, `dir`, `cmd`, ...) are read exactly the same way a
+ * wasp.keys entry's are, since both end up building the same Arg for the
+ * same wasp_lookup_action() function. */
+static void
+load_gestures(lua_State *L, int wasptbl)
+{
+	int t, n, i;
+	Gesture *buf;
+	size_t count = 0;
+	static const char *dirnames[4] = { "left", "right", "up", "down" };
+
+	lua_getfield(L, wasptbl, "gestures");
+	if (!lua_istable(L, -1)) {
+		lua_pop(L, 1);
+		return;
+	}
+	t = lua_gettop(L);
+	n = (int)lua_rawlen(L, t);
+	if (n <= 0) {
+		lua_pop(L, 1);
+		return;
+	}
+
+	buf = calloc((size_t)n, sizeof(Gesture));
+	if (!buf) {
+		lua_pop(L, 1);
+		return;
+	}
+
+	for (i = 1; i <= n; i++) {
+		int e, di;
+		const char *action;
+		const char *dirstr;
+		ActionFn fn;
+
+		lua_rawgeti(L, t, i);
+		if (!lua_istable(L, -1)) {
+			lua_pop(L, 1);
+			continue;
+		}
+		e = lua_gettop(L);
+
+		lua_getfield(L, e, "action");
+		action = lua_isstring(L, -1) ? lua_tostring(L, -1) : NULL;
+		fn = action ? wasp_lookup_action(action) : NULL;
+		lua_pop(L, 1); /* action */
+		if (!fn) {
+			lua_pop(L, 1); /* entry table */
+			continue;
+		}
+
+		lua_getfield(L, e, "direction");
+		dirstr = lua_isstring(L, -1) ? lua_tostring(L, -1) : NULL;
+		buf[count].direction = NULL;
+		for (di = 0; dirstr && di < 4; di++) {
+			if (!strcmp(dirstr, dirnames[di])) {
+				buf[count].direction = dirnames[di];
+				break;
+			}
+		}
+		lua_pop(L, 1); /* direction */
+		if (!buf[count].direction) {
+			lua_pop(L, 1); /* entry table */
+			continue;
+		}
+
+		lua_getfield(L, e, "fingers");
+		buf[count].fingers = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : 0;
+		lua_pop(L, 1); /* fingers */
+
+		buf[count].func = fn;
+		buf[count].arg = build_key_arg(L, e, action);
+		count++;
+
+		lua_pop(L, 1); /* entry table */
+	}
+	lua_pop(L, 1); /* gestures table */
+
+	if (count > 0) {
+		gestures = buf; /* leaked on reload -- see NOTES.md */
+		ngestures = count;
+	} else {
+		free(buf);
+	}
+}
+
 void
 waspconfig_load(void)
 {
@@ -1119,6 +1218,7 @@ waspconfig_load(void)
 		load_scratchpad(L, wasptbl);
 		load_rules(L, wasptbl);
 		load_monitors(L, wasptbl);
+		load_gestures(L, wasptbl);
 	}
 	lua_pop(L, 1); /* the wasp global (or whatever lua_getglobal pushed) */
 

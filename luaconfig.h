@@ -205,6 +205,29 @@ typedef struct {
 extern MonitorRule *monrules;
 extern size_t nmonrules;
 
+/* wasp.gestures = { { fingers=, direction=, action=, ... }, ... } -- touchpad
+ * swipe gestures (pinch/hold aren't wired up -- libinput/wlroots deliver
+ * them separately and nothing here listens for either yet, see NOTES.md
+ * item 8). Dispatched through the exact same action/arg machinery as
+ * wasp.keys, not a separate gesture-only action set: `action` is any name
+ * wasp_lookup_action() (dwl.c) knows, and per-action extra fields (`tag`,
+ * `dir`, `cmd`, ...) are read by luaconfig.c's build_key_arg() -- the very
+ * same function wasp.keys entries already use. `fingers` is the exact
+ * finger count to match (0 = any); `direction` is "left"/"right"/"up"/
+ * "down", classified by dwl.c's swipeend() from the gesture's summed delta
+ * once it ends (dominant axis, then sign). A missing/empty wasp.gestures is
+ * a safe default, same as wasp.rules -- no gestures configured just means
+ * swipes do nothing. */
+typedef struct {
+	int fingers;
+	const char *direction;
+	void (*func)(const Arg *);
+	Arg arg;
+} Gesture;
+
+extern Gesture *gestures;
+extern size_t ngestures;
+
 /* Loads (or reloads) the config, overwriting the globals above in place.
  * Safe to call again later for a hot-reload once callers redraw/rearrange
  * afterwards -- nothing here restarts the compositor, and it never

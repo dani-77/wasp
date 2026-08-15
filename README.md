@@ -101,6 +101,12 @@ working:
   bit-for-bit; live on hot-reload, same as gaps. Not ported: layer-shell
   (bar/panel) animation, per-window-rule overrides, `slide`-from-edge for
   OPEN — see `NOTES.md` item 3 for the full scope note.
+- **Touchpad gestures**: `wasp.gestures = { { fingers=, direction=,
+  action=, ... }, ... }` — swipe gestures dispatched through the exact same
+  action/arg table as `wasp.keys` (`focusmon`, `view`, `spawn`, ... all work
+  here too), matched by finger count (0/omitted = any) and direction
+  (`"left"`/`"right"`/`"up"`/`"down"`, classified from the swipe's dominant
+  axis once it ends). Swipe only — no pinch/hold yet.
 
 Not done yet: mouse-drag resize variety and more border styles. The full
 running list, plus which [dwl-patches] are earmarked for which feature and
