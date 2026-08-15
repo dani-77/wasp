@@ -94,7 +94,7 @@
  * togglescratchpad() puts it back on a real tag. Shared by every named
  * scratchpad slot -- which slot a given client belongs to is tracked
  * separately via its own `scratchpad` field, not via distinct tag bits
- * per slot. See dwl.c's togglescratchpad(). */
+ * per slot. See wasp.c's togglescratchpad(). */
 #define SPTAG                   (1u << LENGTH(tags))
 #define LISTEN(E, L, H)         wl_signal_add((E), ((L)->notify = (H), (L)))
 #define LISTEN_STATIC(E, H)     do { struct wl_listener *_l = ecalloc(1, sizeof(*_l)); _l->notify = (H); wl_signal_add((E), _l); } while (0)
@@ -112,7 +112,7 @@ enum { XDGShell, LayerShell, X11 }; /* client types */
 enum { LyrBg, LyrBottom, LyrTile, LyrFloat, LyrTop, LyrFS, LyrOverlay, LyrBlock, NUM_LAYERS }; /* scene layers */
 enum { ClkTagBar, ClkLtSymbol, ClkStatus, ClkTitle, ClkClient, ClkRoot }; /* clicks */
 
-/* Arg is defined in luaconfig.h now (both dwl.c and luaconfig.c need the
+/* Arg is defined in luaconfig.h now (both wasp.c and luaconfig.c need the
  * exact same layout -- see that header). */
 
 typedef struct {
@@ -177,7 +177,7 @@ typedef struct {
 	struct wlr_box prev; /* layout-relative, includes border */
 	struct wlr_box bounds; /* only width and height are used */
 	/* wasp: animation state (wasp.animations) -- see start_animation()/
-	 * animate_client() in dwl.c. action/running/AnimNone when nothing is
+	 * animate_client() in wasp.c. action/running/AnimNone when nothing is
 	 * animating (the default with wasp.animations.enable = false); target
 	 * is normally == geom, except during a TAG-out tween, where geom is
 	 * deliberately left as the real, restorable position and target holds
@@ -220,7 +220,7 @@ typedef struct {
 } Client;
 
 /* Key is defined in luaconfig.h now too -- luaconfig.c builds keys[]
- * entries out of it at runtime, so it can't live only in dwl.c anymore. */
+ * entries out of it at runtime, so it can't live only in wasp.c anymore. */
 
 typedef struct {
 	struct wlr_keyboard_group *wlr_group;
@@ -308,7 +308,7 @@ struct Monitor {
 	struct wlr_ext_workspace_handle_v1 **ext_workspaces;
 };
 
-/* MonitorRule is defined in luaconfig.h now (both dwl.c and luaconfig.c
+/* MonitorRule is defined in luaconfig.h now (both wasp.c and luaconfig.c
  * need the exact same layout -- see Rule's own comment above for why
  * this pattern keeps recurring in this file). */
 
@@ -326,7 +326,7 @@ typedef struct {
 	unsigned int tag;
 } ExtWorkspaceTag;
 
-/* Rule is defined in luaconfig.h now (both dwl.c and luaconfig.c need the
+/* Rule is defined in luaconfig.h now (both wasp.c and luaconfig.c need the
  * exact same layout -- see that header, and Arg/Key's own comment above
  * for why this pattern is used repeatedly in this file). */
 
@@ -510,6 +510,7 @@ static void updateextworkspaces(Monitor *m);
 static void updatetitle(struct wl_listener *listener, void *data);
 static void urgent(struct wl_listener *listener, void *data);
 static void view(const Arg *arg);
+static void viewshift(const Arg *arg);
 static void virtualkeyboard(struct wl_listener *listener, void *data);
 static void virtualpointer(struct wl_listener *listener, void *data);
 static Monitor *xytomon(double x, double y);
@@ -665,7 +666,7 @@ static struct wlr_xwayland *xwayland;
 
 /* wasp: bridge for luaconfig.c, which builds Key entries out of parsed
  * config.lua data at runtime. It's a separate translation unit and can't
- * reach dwl.c's `static` action functions or the `layouts[]` table above
+ * reach wasp.c's `static` action functions or the `layouts[]` table above
  * (just defined by config.h) directly, so it asks for them by name
  * instead. Add a line here for every action name config.lua's
  * `wasp.keys` entries are allowed to use -- see luaconfig.c's
@@ -681,6 +682,7 @@ static const struct { const char *name; ActionFn fn; } actiontable[] = {
 	{ "setscale",         setscale },
 	{ "zoom",             zoom },
 	{ "view",             view },
+	{ "viewshift",        viewshift },
 	{ "toggleview",       toggleview },
 	{ "tag",              tag },
 	{ "toggletag",        toggletag },
@@ -2623,7 +2625,13 @@ drawbar(Monitor *m)
 	if (barlayout[0] == '\0')
 		barlayout = "tln|s";
 
-	drwl_text(m->drw, 0, 0, m->w.width, m->b.height, 0, "", 0); /* draw background */
+	/* wasp: m->b.width is the buffer's own (physical-pixel) width -- not
+	 * m->w.width, which is the monitor's usable area in layout/logical
+	 * coordinates and only equals m->b.width when scale == 1. Using
+	 * m->w.width here left a blank strip along the buffer's own right edge
+	 * (of size m->b.width - m->w.width) at any other scale, since the
+	 * bar's pixel buffer itself is always allocated at m->b.width. */
+	drwl_text(m->drw, 0, 0, m->b.width, m->b.height, 0, "", 0); /* draw background */
 
 	for (i = 0; i < strlen(barlayout); i++) {
 		switch (barlayout[i]) {
@@ -2646,7 +2654,7 @@ drawbar(Monitor *m)
             x -= tw;
 
           drwl_setscheme(m->drw, colors[m == selmon ? SchemeSel : SchemeNorm]);
-          drwl_text(m->drw, x, 0, moveright ? tw : m->w.width, m->b.height, m->lrpad / 2, client_get_title(c), 0);
+          drwl_text(m->drw, x, 0, moveright ? tw : m->b.width, m->b.height, m->lrpad / 2, client_get_title(c), 0);
 
           if (c && c->isfloating)
             drwl_rect(m->drw, x + boxs, boxs, boxw, boxw, 0, 0);
@@ -2707,7 +2715,7 @@ drawbar(Monitor *m)
 
 			case '|':
 				moveright = 1;
-				x = m->w.width;
+				x = m->b.width;
 				break;
     }
   }
@@ -3348,7 +3356,7 @@ void
 movestack(const Arg *arg)
 {
 	/* Adapted from dwl-patches' movestack patch: swaps the focused
-	 * client's position in the tiling order (dwl.c's `clients` list, what
+	 * client's position in the tiling order (wasp.c's `clients` list, what
 	 * tile()/monocle()/dwindle() walk) with the next/previous *visible*
 	 * client, instead of just moving keyboard focus like focusstack()
 	 * does. arg->i > 0 moves it later in the stack, < 0 moves it earlier.
@@ -4950,6 +4958,34 @@ view(const Arg *arg)
 	focusclient(focustop(selmon), 1);
 	arrange(selmon);
 	drawbars();
+}
+
+/* wasp: "next/previous workspace", e.g. for a 4-finger swipe gesture --
+ * dwm-style tags are a bitmask, not a linear index, so there's no
+ * inherent "next" tag. Treats the *lowest* bit currently set as "the"
+ * active tag (the common case is exactly one bit set -- with several,
+ * or none, this just picks a deterministic starting point rather than
+ * refusing to shift), wraps by arg->i (+1/-1) through LENGTH(tags), and
+ * hands the result to view() so Mod+Tab's "go back" bookkeeping (the
+ * seltags toggle) stays consistent afterward. No-op if selmon is unset
+ * or arg->i is 0. */
+void
+viewshift(const Arg *arg)
+{
+	Arg a;
+	unsigned int cur;
+	int idx, n = LENGTH(tags);
+
+	if (!selmon || !arg->i)
+		return;
+	cur = selmon->tagset[selmon->seltags] & TAGMASK;
+	for (idx = 0; idx < n && !(cur & (1u << idx)); idx++)
+		;
+	if (idx == n)
+		idx = 0;
+	idx = ((idx + arg->i) % n + n) % n;
+	a.ui = 1u << idx;
+	view(&a);
 }
 
 void

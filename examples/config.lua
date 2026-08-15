@@ -206,6 +206,7 @@ wasp.rules = {
 --   incnmaster        dir = 1 | -1          grow/shrink the master area's window count
 --   setmfact          delta = <float>       grow/shrink the master area's size (+/-)
 --   view              tag = 1..9 | "all" (omit = toggle back)   switch workspace
+--   viewshift         dir = 1 | -1          switch to next/previous workspace (wraps)
 --   toggleview        tag = 1..9                                 also show workspace
 --   tag               tag = 1..9 | "all" (omit = toggle back)   move focused window to workspace
 --   toggletag         tag = 1..9                                 also tag focused window with workspace
@@ -308,7 +309,7 @@ bind({ "mod", "shift" }, "greater", "tagmon",   { dir = "right" })
 -- Live output-scale inc/dec on the focused monitor -- same Mod+Shift+P/M
 -- as spitfire, so muscle memory carries over between the two. `delta` is
 -- relative (added to the current scale, not an absolute value); clamped
--- to a sane 0.25-4.0 range in dwl.c.
+-- to a sane 0.25-4.0 range in wasp.c.
 bind({ "mod", "shift" }, "p", "setscale", { delta = 0.25 })
 bind({ "mod", "shift" }, "m", "setscale", { delta = -0.25 })
 

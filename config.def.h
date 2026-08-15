@@ -27,7 +27,7 @@ static int log_level = WLR_ERROR;
  * (unlike keys, an empty rule set is a perfectly safe default -- nothing
  * about it can lock you out). */
 
-/* layout(s) -- indices here are what wasp_layout_by_name() in dwl.c maps
+/* layout(s) -- indices here are what wasp_layout_by_name() in wasp.c maps
  * config.lua's setlayout `layout = "..."` strings onto ("tile", "floating",
  * "monocle", "dwindle"/"fibonacci"); keep both in sync if you reorder these. */
 static const Layout layouts[] = {

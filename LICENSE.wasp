@@ -28,7 +28,7 @@ SOFTWARE.
 This covers files wasp added that have no upstream dwl equivalent: this
 file, README.md, NOTES.md, luaconfig.c, luaconfig.h, examples/config.lua,
 scripts/*, packaging/*, wasp.desktop, and assets/* (logo/branding). It does not cover
-dwl.c, config.def.h, config.mk, Makefile, client.h, util.c, util.h, dwl.1,
+wasp.c, config.def.h, config.mk, Makefile, client.h, util.c, util.h, wasp.1,
 or protocols/* -- those are modifications of dwl's own GPLv3-licensed
 files and remain under LICENSE (GPLv3) as derivative works, same as any
 fork of GPL code. See README.md's Credit section for the short version.

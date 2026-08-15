@@ -339,7 +339,7 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
    top of* the window, radius masks the window's own square corners along
    with rounding the border itself. wasp's border today is 4 separate flat
    `wlr_scene_rect` rects per client (`client_set_border_color()` /
-   `resize()` in `dwl.c`) -- plain rects can't be rounded (or blurred) on
+   `resize()` in `wasp.c`) -- plain rects can't be rounded (or blurred) on
    their own, needs an actual rendering change, not just a config knob.
    **Real path forward found (2026-08-13): [SceneFX]
    (https://github.com/wlrfx/scenefx)** -- "a drop-in replacement for the
@@ -417,7 +417,7 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
        wasp's border today is still dwm's original **4 separate flat
        rects** (`c->border[4]` -- top/bottom/left/right strips that only
        visually meet at the corners, see `resize()`/`createnotify()` in
-       `dwl.c`) -- rounding *that* shape isn't a drop-in call, the four
+       `wasp.c`) -- rounding *that* shape isn't a drop-in call, the four
        strips would need collapsing into one rect (ashwc's model) first,
        independent of whichever scenefx call ends up doing the actual
        rounding. Worth deciding up front rather than discovering it
@@ -430,7 +430,7 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
        likely the same "Xwayland doesn't get rounded corners" gap, not
        verified live since ashwc's own README doesn't mention Xwayland
        support at all (may not build with `XWAYLAND` the way wasp does).
-     - Not yet done: actually wiring any of this into `dwl.c` --
+     - Not yet done: actually wiring any of this into `wasp.c` --
        this is reference material read and written up, not a landed
        change. `wasp.blur = { enable, radius, passes, noise, brightness,
        contrast, saturation }` alongside an extended `wasp.gaps`-sibling
@@ -497,7 +497,7 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
    real implementation; research trail from 2026-08-14 kept as-is
    underneath. (2026-08-14, researched via ashwc after Daniel
    asked whether it'd be easy) -- wasp has no gesture code at all today
-   (`dwl.c` has zero `events.swipe_*`/`pinch_*` listeners), but wlroots
+   (`wasp.c` has zero `events.swipe_*`/`pinch_*` listeners), but wlroots
    already delivers swipe/pinch off the very same `wlr_pointer` wasp
    already listens on for motion/buttons -- no missing plumbing has to go
    in first, this would be new listeners on an object wasp already owns.
@@ -523,7 +523,7 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
    **Assessment: easy, and doesn't touch rendering at all** -- a good
    candidate to land *before* the scenefx work above, not after.
    Comparable in size to the scratchpad feature already shipped: ~40-60
-   lines of new `dwl.c` code (3 listeners + a direction-classify end
+   lines of new `wasp.c` code (3 listeners + a direction-classify end
    handler, reusing wasp's existing keybind action functions instead of
    building new ones) plus a `wasp.gestures = { {fingers=, direction=,
    action=, args=}, ... }` config array following the exact same
@@ -547,7 +547,7 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
    `createpointer()` itself. `cursor_swipe_begin/update/end` static
    listeners, removed in `cleanuplisteners()` same as the others.
 
-   `swipebegin()`/`swipeupdate()`/`swipeend()` (`dwl.c`, alphabetically
+   `swipebegin()`/`swipeupdate()`/`swipeend()` (`wasp.c`, alphabetically
    between `statusin()` and `tag()`) match ashwc's own classify-on-end
    shape almost exactly: a `(gesture_dx, gesture_dy)` accumulator reset at
    swipe_begin (also stashing `fingers`), summed at each swipe_update,
@@ -600,7 +600,7 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
    it surfaced this real gap instead). wasp today only creates the
    legacy pair -- `wlr_export_dmabuf_manager_v1_create(dpy)` +
    `wlr_screencopy_manager_v1_create(dpy)`, right next to
-   `wlr_data_device_manager_create()` in `dwl.c`'s `setup()` -- and so
+   `wlr_data_device_manager_create()` in `wasp.c`'s `setup()` -- and so
    does ashwc (`src/ashwc.c`, same two calls, nothing else, confirmed
    while researching items 7/8 above). Output-level only: a client can
    only ever ask to capture a whole output, never a single window, and
@@ -659,7 +659,7 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
 
 ## Core (not patch-derived)
 - **Lua config, live-reloadable — done (2026-08-12), bound-key trigger**:
-  `dwl.c`'s `reload()` action (default bind: `mod+shift+r`, see
+  `wasp.c`'s `reload()` action (default bind: `mod+shift+r`, see
   `examples/config.lua`) calls `waspconfig_load()` again and re-applies
   whatever of it can take effect without a restart, live: **gaps** (free —
   `arrange()` already reads `gapsinner`/`gapsouter`/`gapsmart` fresh every
@@ -686,7 +686,7 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
   more solid starting point than reinventing font rendering from scratch.
   Done: `barlayout`/colors/enable-toggle are `config.lua`-driven.
 - **Keybindings (done, 2026-08-12)**: `wasp.keys` in `config.lua` builds
-  dwl.c's `Key keys[]` at runtime (`luaconfig.c`'s `load_keys()`), instead
+  wasp.c's `Key keys[]` at runtime (`luaconfig.c`'s `load_keys()`), instead
   of the old compile-time `config.h` array. `wasp.modkey` sets what "mod"
   means; `wasp.terminal`/`wasp.menu` make the launched terminal/menu
   agnostic (this laptop uses `alacritty`, but it's just Lua data now, not
@@ -696,7 +696,7 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
   never locks you out; the full suggested keymap (layouts, monitor nav,
   resize, `moveresizekb`, ...) lives in `examples/config.lua` as data —
   see that file's action-reference comment for the full list of actions
-  and fields. `dwl.c`'s `buttons[]` (mouse bindings) is still the old
+  and fields. `wasp.c`'s `buttons[]` (mouse bindings) is still the old
   static `config.h` array, not Lua-driven yet — worth revisiting.
 - **Named scratchpads (done, 2026-08-13)**: `wasp.scratchpad = { { name=,
   cmd=, app_id=, w=, h= }, ... }` in `config.lua`, toggled via the
@@ -722,7 +722,7 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
   survive a hot-reload; the `Client` field does, so a reload never
   orphans an already-spawned scratchpad. Known gap, same shape as the
   `autostart` one already documented above: if the spawned process exits
-  before ever mapping a surface, dwl.c's "pending spawn" bookkeeping
+  before ever mapping a surface, wasp.c's "pending spawn" bookkeeping
   (`pending_scratchpad_name`/`pending_scratchpad_appid`, cleared once
   claimed) is left dangling until the *next* toggle of any slot
   overwrites it — harmless in practice (worst case, a later differently
@@ -748,7 +748,7 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
   only the *last* match's `floating`/`monitor`/`center` (same last-match-
   wins semantics upstream dwl's `applyrules()` already had for those
   before this change). New vs. upstream dwl: the `center` field --
-  `applyrules()` calls a new shared `centeredgeom()` helper (`dwl.c`,
+  `applyrules()` calls a new shared `centeredgeom()` helper (`wasp.c`,
   right before `applyrules()`) after `setmon()`, at the client's own
   requested size (`c->geom`, already populated by `mapnotify()` by the
   time `applyrules()` runs) -- see the "Researched" note under item 6
@@ -772,7 +772,7 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
   just consistent with every run observed. Not something wasp can or
   should paper over -- `applyrules()`'s matching logic was never wrong,
   the *input* it was matching against just genuinely changes. Fixed
-  pragmatically in `config.lua`, not in `dwl.c`: list the same app twice
+  pragmatically in `config.lua`, not in `wasp.c`: list the same app twice
   in `wasp.rules`, once per app_id it's been seen reporting, identical
   fields both times (dwl's rule matching already tolerates multiple
   matches fine). `examples/config.lua` got a general-purpose comment
@@ -861,7 +861,7 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
   same way `Rule`/`Scratchpad`/`Key` did: `MonitorRule` now lives in
   `luaconfig.h` (`lt`/`rr` typed as `const void *`/`uint32_t` there,
   same reasoning as `Arg.v` holding a layout pointer -- that header can't
-  see dwl.c's `Layout` type or pull in a wayland/wlroots include just for
+  see wasp.c's `Layout` type or pull in a wayland/wlroots include just for
   one enum), `monrules`/`nmonrules` are runtime globals `luaconfig.c`'s
   `load_monitors()` rebuilds on every `waspconfig_load()` call,
   `config.def.h`/`config.h` only keep an explanatory comment where the
@@ -871,7 +871,7 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
   fallback here, the exact same default `config.def.h` used to hardcode
   (any output, mfact 0.55, nmaster 1, scale 1, tile, no rotation,
   autoconfigured position), built via `wasp_layout_by_name("tile")`
-  rather than statically, since that's a plain lookup into dwl.c's
+  rather than statically, since that's a plain lookup into wasp.c's
   `layouts[]` with no Lua/config.lua dependency, safe to call this
   early. First-match-wins per output (not OR-accumulated like `Rule`'s
   `tags`) -- deliberately preserved upstream dwl's own `monrules[]`
@@ -880,7 +880,7 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
   doesn't have an OR-able reading the way multiple tags does.
 
   New vs. upstream dwl: only `scale` is live. A new `setscale` action
-  (`dwl.c`, next to `setmfact()`) nudges `selmon`'s output scale by a
+  (`wasp.c`, next to `setmfact()`) nudges `selmon`'s output scale by a
   relative `delta` via the same minimal `struct wlr_output_state state =
   {0}; wlr_output_state_set_scale(...); wlr_output_commit_state(...);
   updatemons(NULL, NULL);` idiom `powermgrsetmode()` already used for a
@@ -918,7 +918,7 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
 - **gaps** / **vanitygaps** / **genericgaps** — inner/outer gaps, adjustable
   live from `config.lua`. **Done (2026-08-12)**: adapted (not applied
   as-is) from the `gaps` patch — `gappedarea()`/`insetgap()` helpers in
-  `dwl.c`, consumed by `tile()`/`monocle()`/`dwindle()`. Unlike the
+  `wasp.c`, consumed by `tile()`/`monocle()`/`dwindle()`. Unlike the
   reference patch's single `gappx`, wasp splits it into `wasp.gaps = {
   inner, outer, smart }` (spitfire-style: `inner` between windows, `outer`
   against the monitor edge, `smart` drops `outer` for a lone window) —
@@ -926,11 +926,11 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
   reference patch has `togglegaps`) — just static `config.lua` values for
   now, worth adding later if wanted.
 - **dragresize** / **better-resize** — mouse-drag resize behavior.
-  **moveresizekb is done** (2026-08-12): adapted into `dwl.c`, bound via
+  **moveresizekb is done** (2026-08-12): adapted into `wasp.c`, bound via
   `wasp.keys`' `moveresizekb` action (dx/dy/dw/dh, see
   `examples/config.lua`) — floating-window keyboard move/resize.
 - **dwindle** — fibonacci/spiral tiling layout. **Done (2026-08-12)**:
-  adapted into `dwl.c` as `dwindle()`, reachable via `setlayout`'s
+  adapted into `wasp.c` as `dwindle()`, reachable via `setlayout`'s
   `layout = "dwindle"` (or `"fibonacci"`) in `config.lua`.
 - **borders** / **smartborders** / **simpleborders** — window border
   rendering/behavior (colors should come from `config.lua`, same as
@@ -941,7 +941,7 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
   level up — rather than spitfire's `wasp.autostart({...})` function-call
   syntax or the dwl-patches reference's flat NULL-separated C array).
   `luaconfig.c`'s `load_autostart()` only *parses* it into the
-  `autostart`/`nautostart` globals; `dwl.c`'s `autostartexec()` (adapted
+  `autostart`/`nautostart` globals; `wasp.c`'s `autostartexec()` (adapted
   from dwl-patches' `autostart` patch: fork+execvp each one directly, no
   shell, `setsid()` so each becomes its own process group) is what
   actually spawns them, called once from `run()` right after the backend
@@ -959,7 +959,7 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
 - **Layout switching + repeat speed — done (2026-08-12)**: `wasp.keyboard =
   { layout, variant, model, options, rules, repeat_rate, repeat_delay }` in
   `config.lua`, same table shape as spitfire's `spitfire.keyboard`.
-  `luaconfig.c`'s `load_keyboard()` fills dwl.c's `xkb_rules` (feeds
+  `luaconfig.c`'s `load_keyboard()` fills wasp.c's `xkb_rules` (feeds
   `xkb_keymap_new_from_names()` directly) and `repeat_rate`/`repeat_delay`
   globals. Applied once at startup, same as everything else pending the
   general reload story above.
@@ -972,13 +972,13 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
   not an actual Alt-vs-AltGr keysym/modifier collision as first
   suspected. So: **`reload()`'s keyboard keymap swap has a known
   limitation** -- rebuilding and reassigning the keymap on the live
-  `kb_group` (see `reload()` in `dwl.c`) isn't always enough to fully
+  `kb_group` (see `reload()` in `wasp.c`) isn't always enough to fully
   pick up a *layout* change; a real restart is more reliable for that
   specific case. Checked wlroots' public `wlr_keyboard_group` API for an
   obvious fix (e.g. resetting each individual member keyboard, not just
   the group's own virtual one) -- nothing exposed publicly beyond what
   `reload()` already does (`struct wlr_keyboard_group`'s member-device
-  list is private/internal, not reachable from `dwl.c`), so not chasing
+  list is private/internal, not reachable from `wasp.c`), so not chasing
   this further without a clearer lead. In practice: gaps/bar/colors/
   repeat-speed reload live reliably; a keyboard *layout* change might
   need a restart to fully take -- worth keeping in mind, not urgent to
@@ -987,9 +987,9 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
 ## Licensing
 - **Done (2026-08-12)**: split license, since wasp now has original code of
   its own, not just modified dwl files. `LICENSE` (GPLv3, dwl's own) stays
-  as-is and still covers everything derived from upstream dwl (`dwl.c`,
+  as-is and still covers everything derived from upstream dwl (`wasp.c`,
   `config.def.h`, `config.mk`, `Makefile`, `client.h`, `util.c`, `util.h`,
-  `dwl.1`, `protocols/*`) plus the compiled `wasp` binary as a whole, since
+  `wasp.1`, `protocols/*`) plus the compiled `wasp` binary as a whole, since
   it links GPLv3 code — that's a requirement of GPLv3, not a choice.
   **`LICENSE.wasp` (new, MIT)** covers wasp's own from-scratch files with
   no upstream equivalent (`luaconfig.c`/`.h`, `README.md`, this file,
@@ -1002,7 +1002,7 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
   `wasp:` target, `make install` installs `$(PREFIX)/bin/wasp`).
   `wasp.desktop` (was `dwl.desktop`) installs to
   `$(DATADIR)/wayland-sessions/wasp.desktop` so greetd (or any
-  wayland-sessions-reading greeter) can list/select it. `dwl.1`'s man page
+  wayland-sessions-reading greeter) can list/select it. `wasp.1`'s man page
   content itself is still the unmodified upstream dwl one — not renamed,
   out of scope for now.
 - **D-Bus session bus + xdg-desktop-portal (done, 2026-08-14)**: confirmed

@@ -2,7 +2,7 @@
  * (border color/width, root background, the built-in bar's
  * enable/position/layout), the agnostic terminal/menu launcher commands,
  * and keybindings -- config.lua's `wasp.keys` array is turned into the
- * `Key keys[]` dwl.c's keybinding() dispatch loop walks. Autostart/rules
+ * `Key keys[]` wasp.c's keybinding() dispatch loop walks. Autostart/rules
  * etc. build on top of this same waspconfig_load() later; see NOTES.md.
  */
 #include "luaconfig.h"
@@ -60,7 +60,7 @@ size_t ngestures;
 /* Primary modifier for config.lua keybinds that say mods = {"mod", ...} --
  * set via wasp.modkey ("alt"/"ctrl"/"super"/"shift"), defaults to Alt (what
  * config.def.h used to hardcode as MODKEY). Only used while building
- * keys[] below; dwl.c's static buttons[] (mouse bindings, not Lua-driven
+ * keys[] below; wasp.c's static buttons[] (mouse bindings, not Lua-driven
  * yet) still uses its own compile-time MODKEY macro. */
 static uint32_t modkey;
 
@@ -71,7 +71,7 @@ static const char *default_menucmd[] = { "wmenu-run", NULL };
  * the exact single default rule config.def.h used to hardcode (any output,
  * mfact 0.55, nmaster 1, scale 1, tile layout, no rotation, autoconfigured
  * position). Built in set_defaults() below, not statically, since it needs
- * wasp_layout_by_name() (a plain lookup into dwl.c's layouts[] table, no
+ * wasp_layout_by_name() (a plain lookup into wasp.c's layouts[] table, no
  * Lua/config.lua dependency -- safe to call this early). */
 static MonitorRule default_monrules[1];
 
@@ -165,16 +165,16 @@ set_defaults(void)
 	animtag_direction = "right";
 	animbz_move = animbz_open = animbz_close = animbz_tag =
 		(struct wasp_bezier){ 0.25f, 0.1f, 0.25f, 1.0f };
-	init_anim_curves(); /* bake the defaults now -- ease() (dwl.c) always
+	init_anim_curves(); /* bake the defaults now -- ease() (wasp.c) always
 	                      * needs a valid table, even if config.lua is
 	                      * missing/broken and load_animations() never runs */
 	autostart = NULL; /* re-parsed data only -- doesn't touch already-spawned
-	                    * processes, see autostartexec()/reload() in dwl.c */
+	                    * processes, see autostartexec()/reload() in wasp.c */
 	nautostart = 0;
 	scratchpads = NULL; /* re-parsed data only -- doesn't touch already-
 	                      * spawned/shown scratchpad clients, which track
 	                      * their slot by name on the Client itself instead
-	                      * -- see luaconfig.h and dwl.c's togglescratchpad() */
+	                      * -- see luaconfig.h and wasp.c's togglescratchpad() */
 	nscratchpads = 0;
 	rules = NULL; /* no rules is a perfectly safe default (upstream dwl's own
 	                * behavior with an empty rules[]) -- unlike keys, nothing
@@ -376,7 +376,7 @@ load_background(lua_State *L, int wasptbl)
 
 /* wasp.gaps = { inner = <px>, outer = <px>, smart = <bool> } -- see
  * gapsinner/gapsouter/gapsmart in luaconfig.h for what each does; consumed
- * by tile()/monocle()/dwindle() in dwl.c. */
+ * by tile()/monocle()/dwindle() in wasp.c. */
 static void
 load_gaps(lua_State *L, int wasptbl)
 {
@@ -398,10 +398,10 @@ load_gaps(lua_State *L, int wasptbl)
  * duration_close=, duration_tag=, type_open=, type_close=, zoom_ratio=,
  * fade_from_opacity=, tag_direction=, curve_move=, curve_open=,
  * curve_close=, curve_tag= } -- see the extern block in luaconfig.h for
- * what each field does. Always ends by calling init_anim_curves() (dwl.c)
+ * what each field does. Always ends by calling init_anim_curves() (wasp.c)
  * to (re)bake the lookup tables ease() reads from -- needed even when this
  * table is absent/empty, since set_defaults() already baked the defaults
- * once, but a hot-reload (see reload() in dwl.c) that changes a curve_*
+ * once, but a hot-reload (see reload() in wasp.c) that changes a curve_*
  * value needs those tables rebaked too, not just the raw control points
  * updated. */
 static void
@@ -470,7 +470,7 @@ load_keyboard(lua_State *L, int wasptbl)
 }
 
 /* wasp.modkey = "alt"|"ctrl"|"super"|"shift" -- what "mod" means inside a
- * wasp.keys entry's mods array. Doesn't touch dwl.c's static buttons[]
+ * wasp.keys entry's mods array. Doesn't touch wasp.c's static buttons[]
  * (mouse bindings still use MODKEY from config.def.h). */
 static uint32_t
 basemod_from_name(const char *name)
@@ -554,7 +554,7 @@ load_terminal_menu(lua_State *L, int wasptbl)
 
 /* wasp.autostart = { {"swaybg","-i","~/wallpaper.png"}, {"foot"} } -- an
  * array of argv arrays, same shape as termcmd/menucmd one level up. Only
- * parses/stores the data here (dwl.c's autostartexec() is what actually
+ * parses/stores the data here (wasp.c's autostartexec() is what actually
  * spawns it, once, at real startup -- see luaconfig.h). Entries that
  * aren't tables, or are empty tables, are skipped rather than aborting
  * the whole list. */
@@ -695,7 +695,7 @@ load_scratchpad(lua_State *L, int wasptbl)
  * ... } -- see Rule in luaconfig.h. `app_id`/`title` are substring-matched
  * against the client's own; `tags` is a 1..9 workspace number (matching
  * wasp.keys' own `tag` field convention), converted to the bitmask
- * dwl.c's applyrules() actually wants; `monitor` defaults to -1 ("don't
+ * wasp.c's applyrules() actually wants; `monitor` defaults to -1 ("don't
  * force one") if omitted. Entries are as lenient as the rest of this file
  * -- nothing here is required, an entry that sets nothing useful just
  * never matches anything. */
@@ -906,8 +906,8 @@ load_monitors(lua_State *L, int wasptbl)
 }
 
 /* Builds the Arg for one wasp.keys[i] entry, based on its action name.
- * Every action wasp_lookup_action() (dwl.c) knows about needs a case here
- * -- see the comment above dwl.c's actiontable for the full list. */
+ * Every action wasp_lookup_action() (wasp.c) knows about needs a case here
+ * -- see the comment above wasp.c's actiontable for the full list. */
 static Arg
 build_key_arg(lua_State *L, int e, const char *action)
 {
@@ -924,7 +924,7 @@ build_key_arg(lua_State *L, int e, const char *action)
 	} else if (!strcmp(action, "spawn-menu")) {
 		arg.v = menucmd;
 	} else if (!strcmp(action, "focusstack") || !strcmp(action, "incnmaster")
-			|| !strcmp(action, "movestack")) {
+			|| !strcmp(action, "movestack") || !strcmp(action, "viewshift")) {
 		arg.i = 1;
 		lua_getfield(L, e, "dir");
 		if (lua_isnumber(L, -1))
@@ -982,7 +982,7 @@ build_key_arg(lua_State *L, int e, const char *action)
 		}
 	} else if (!strcmp(action, "toggle-scratchpad")) {
 		/* Just the slot's name -- resolved against the live
-		 * `scratchpads` array at call time (dwl.c's togglescratchpad()),
+		 * `scratchpads` array at call time (wasp.c's togglescratchpad()),
 		 * not looked up here, so it keeps working across a reload even
 		 * though that array itself gets rebuilt from scratch each time. */
 		lua_getfield(L, e, "name");
@@ -1094,7 +1094,7 @@ load_keys(lua_State *L, int wasptbl)
 /* wasp.gestures = { { fingers = 3, direction = "left", action = "focusmon",
  *                     dir = "left" }, ... } -- see Gesture in luaconfig.h.
  * `direction` must be one of "left"/"right"/"up"/"down" (anything else
- * leaves the entry with direction = NULL, which dwl.c's swipeend() never
+ * leaves the entry with direction = NULL, which wasp.c's swipeend() never
  * matches -- silently inert, same leniency as an unknown wasp.keys action).
  * `fingers` defaults to 0 ("any") if omitted or not a number. Reuses
  * build_key_arg() verbatim for the action's own arg -- a gesture entry's

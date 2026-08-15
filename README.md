@@ -194,8 +194,8 @@ overwritten.
 
 Two licenses, because this is a fork, not a from-scratch project:
 
-- **`LICENSE` (GPLv3)** — dwl's own license. `dwl.c`, `config.def.h`,
-  `config.mk`, `Makefile`, `client.h`, `util.c`, `util.h`, `dwl.1`, and
+- **`LICENSE` (GPLv3)** — dwl's own license. `wasp.c`, `config.def.h`,
+  `config.mk`, `Makefile`, `client.h`, `util.c`, `util.h`, `wasp.1`, and
   `protocols/*` are all modifications of dwl's original files, so they (and
   the compiled `wasp` binary as a whole, since it links GPLv3 code) stay
   under GPLv3 — that's simply a requirement of the license they were under

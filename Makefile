@@ -17,9 +17,9 @@ DWLCFLAGS = `$(PKG_CONFIG) --cflags $(PKGS)` $(WLR_INCS) $(DWLCPPFLAGS) $(DWLDEV
 LDLIBS    = `$(PKG_CONFIG) --libs $(PKGS)` $(WLR_LIBS) -lm $(LIBS)
 
 all: wasp
-wasp: dwl.o util.o luaconfig.o
-	$(CC) dwl.o util.o luaconfig.o $(DWLCFLAGS) $(LDFLAGS) $(LDLIBS) -o $@
-dwl.o: dwl.c client.h config.h config.mk cursor-shape-v1-protocol.h \
+wasp: wasp.o util.o luaconfig.o
+	$(CC) wasp.o util.o luaconfig.o $(DWLCFLAGS) $(LDFLAGS) $(LDLIBS) -o $@
+wasp.o: wasp.c client.h config.h config.mk cursor-shape-v1-protocol.h \
 	pointer-constraints-unstable-v1-protocol.h wlr-layer-shell-unstable-v1-protocol.h \
 	wlr-output-power-management-unstable-v1-protocol.h xdg-shell-protocol.h luaconfig.h
 util.o: util.c util.h
@@ -55,7 +55,7 @@ clean:
 dist: clean
 	mkdir -p wasp-$(VERSION)
 	cp -R LICENSE* Makefile CHANGELOG.md README.md NOTES.md client.h config.def.h \
-		config.mk protocols dwl.1 dwl.c util.c util.h luaconfig.c luaconfig.h \
+		config.mk protocols wasp.1 wasp.c util.c util.h luaconfig.c luaconfig.h \
 		examples scripts packaging wasp.desktop wasp-$(VERSION)
 	tar -caf wasp-$(VERSION).tar.gz wasp-$(VERSION)
 	rm -rf wasp-$(VERSION)
@@ -70,8 +70,8 @@ install: wasp
 	cp -f scripts/wasp-session $(DESTDIR)$(PREFIX)/bin/wasp-session
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/wasp-session
 	mkdir -p $(DESTDIR)$(MANDIR)/man1
-	cp -f dwl.1 $(DESTDIR)$(MANDIR)/man1
-	chmod 644 $(DESTDIR)$(MANDIR)/man1/dwl.1
+	cp -f wasp.1 $(DESTDIR)$(MANDIR)/man1
+	chmod 644 $(DESTDIR)$(MANDIR)/man1/wasp.1
 	mkdir -p $(DESTDIR)$(DATADIR)/wayland-sessions
 	cp -f wasp.desktop $(DESTDIR)$(DATADIR)/wayland-sessions/wasp.desktop
 	chmod 644 $(DESTDIR)$(DATADIR)/wayland-sessions/wasp.desktop
@@ -83,7 +83,7 @@ install: wasp
 	chmod 644 $(DESTDIR)/etc/xdg-desktop-portal/wasp-portals.conf
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/wasp $(DESTDIR)$(PREFIX)/bin/wasp-statusbar \
-		$(DESTDIR)$(PREFIX)/bin/wasp-session $(DESTDIR)$(MANDIR)/man1/dwl.1 \
+		$(DESTDIR)$(PREFIX)/bin/wasp-session $(DESTDIR)$(MANDIR)/man1/wasp.1 \
 		$(DESTDIR)$(DATADIR)/wayland-sessions/wasp.desktop \
 		$(DESTDIR)$(DATADIR)/wasp/config.lua \
 		$(DESTDIR)/etc/xdg-desktop-portal/wasp-portals.conf
