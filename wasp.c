@@ -52,7 +52,22 @@
 #include <wlr/types/wlr_primary_selection.h>
 #include <wlr/types/wlr_primary_selection_v1.h>
 #include <wlr/types/wlr_relative_pointer_v1.h>
-#include <wlr/types/wlr_scene.h>
+/* wasp: SceneFX -- drop-in replacement for wlroots' own wlr_scene.h
+ * (same struct/function names, confirmed source-compatible -- every
+ * existing wlr_scene_*() call site in this file needs zero changes),
+ * adds rounded corners + blur (wasp.border.radius/wasp.blur, see
+ * NOTES.md item 7). clipped_region.h/fx_renderer.h are scenefx-only
+ * additions, no wlroots equivalent.
+ * clipped_region.h (pulled in transitively by wlr_scene.h too) trips
+ * -Wpedantic on its own macro-generated corner_radii_*() definitions
+ * (a stray trailing ';' after each) -- their bug, not wasp's; scoped
+ * push/pop so it doesn't mask a real -Wpedantic hit anywhere else. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+#include <scenefx/types/wlr_scene.h>
+#include <scenefx/types/fx/clipped_region.h>
+#include <scenefx/render/fx_renderer/fx_renderer.h>
+#pragma GCC diagnostic pop
 #include <wlr/types/wlr_screencopy_v1.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_server_decoration.h>
@@ -3139,7 +3154,12 @@ gpureset(struct wl_listener *listener, void *data)
 	struct wlr_renderer *old_drw = drw;
 	struct wlr_allocator *old_alloc = alloc;
 	struct Monitor *m;
-	if (!(drw = wlr_renderer_autocreate(backend)))
+	/* wasp: fx_renderer_create(), not wlr_renderer_autocreate() -- see
+	 * setup()'s own comment on this same swap. Recreating the plain
+	 * wlroots renderer here instead would silently drop rounded
+	 * corners/blur after any GPU-lost recovery, not just fail to apply
+	 * new ones. */
+	if (!(drw = fx_renderer_create(backend)))
 		die("couldn't recreate renderer");
 
 	if (!(alloc = wlr_allocator_autocreate(backend, drw)))
@@ -4342,11 +4362,13 @@ setup(void)
 	drag_icon = wlr_scene_tree_create(&scene->tree);
 	wlr_scene_node_place_below(&drag_icon->node, &layers[LyrBlock]->node);
 
-	/* Autocreates a renderer, either Pixman, GLES2 or Vulkan for us. The user
-	 * can also specify a renderer using the WLR_RENDERER env var.
+	/* wasp: fx_renderer_create() (scenefx), not
+	 * wlr_renderer_autocreate() -- drop-in, same WLR_RENDERER env var
+	 * support underneath, but this is also what actually backs rounded
+	 * corners/blur (wasp.border.radius/wasp.blur, see NOTES.md item 7).
 	 * The renderer is responsible for defining the various pixel formats it
 	 * supports for shared memory, this configures that for clients. */
-	if (!(drw = wlr_renderer_autocreate(backend)))
+	if (!(drw = fx_renderer_create(backend)))
 		die("couldn't create renderer");
 	wl_signal_add(&drw->events.lost, &gpu_reset);
 

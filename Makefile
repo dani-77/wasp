@@ -13,8 +13,8 @@ DWLDEVCFLAGS = -g -Wpedantic -Wall -Wextra -Wdeclaration-after-statement \
 
 # CFLAGS / LDFLAGS
 PKGS      = wayland-server xkbcommon libinput pixman-1 fcft lua5.4 $(XLIBS)
-DWLCFLAGS = `$(PKG_CONFIG) --cflags $(PKGS)` $(WLR_INCS) $(DWLCPPFLAGS) $(DWLDEVCFLAGS) $(CFLAGS)
-LDLIBS    = `$(PKG_CONFIG) --libs $(PKGS)` $(WLR_LIBS) -lm $(LIBS)
+DWLCFLAGS = `$(PKG_CONFIG) --cflags $(PKGS)` $(WLR_INCS) $(SCENEFX_INCS) $(DWLCPPFLAGS) $(DWLDEVCFLAGS) $(CFLAGS)
+LDLIBS    = `$(PKG_CONFIG) --libs $(PKGS)` $(WLR_LIBS) $(SCENEFX_LIBS) -lm $(LIBS)
 
 all: wasp wasp-list-windows
 wasp: wasp.o util.o luaconfig.o

@@ -11,6 +11,13 @@ DATADIR = $(PREFIX)/share
 WLR_INCS = `$(PKG_CONFIG) --cflags wlroots-0.20`
 WLR_LIBS = `$(PKG_CONFIG) --libs wlroots-0.20`
 
+# SceneFX -- drop-in replacement for wlroots' own scene API, adds rounded
+# corners + blur (wasp.border.radius/wasp.blur, see NOTES.md item 7).
+# Pulls in wlroots-0.20's own cflags too (its .pc lists it as a Requires),
+# harmless alongside WLR_INCS above.
+SCENEFX_INCS = `$(PKG_CONFIG) --cflags scenefx-0.5`
+SCENEFX_LIBS = `$(PKG_CONFIG) --libs scenefx-0.5`
+
 # Allow using an alternative wlroots installation
 # This has to have all the includes required by wlroots, e.g:
 # Assuming wlroots git repo is "${PWD}/wlroots" and you only ran "meson setup build && ninja -C build"
