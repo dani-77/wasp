@@ -41,6 +41,7 @@ typedef void (*ActionFn)(const Arg *);
 
 /* appearance -- see luaconfig.c set_defaults() for values */
 extern unsigned int borderpx;
+extern unsigned int border_radius; /* wasp.border.radius, see NOTES.md item 7 */
 extern int showbar;
 extern int topbar;
 extern const char *barlayout;

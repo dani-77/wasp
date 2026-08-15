@@ -13,8 +13,18 @@ DWLDEVCFLAGS = -g -Wpedantic -Wall -Wextra -Wdeclaration-after-statement \
 
 # CFLAGS / LDFLAGS
 PKGS      = wayland-server xkbcommon libinput pixman-1 fcft lua5.4 $(XLIBS)
-DWLCFLAGS = `$(PKG_CONFIG) --cflags $(PKGS)` $(WLR_INCS) $(SCENEFX_INCS) $(DWLCPPFLAGS) $(DWLDEVCFLAGS) $(CFLAGS)
-LDLIBS    = `$(PKG_CONFIG) --libs $(PKGS)` $(WLR_LIBS) $(SCENEFX_LIBS) -lm $(LIBS)
+DWLCFLAGS = `$(PKG_CONFIG) --cflags $(PKGS)` $(SCENEFX_INCS) $(WLR_INCS) $(DWLCPPFLAGS) $(DWLDEVCFLAGS) $(CFLAGS)
+# SCENEFX_LIBS *before* WLR_LIBS -- both export a `wlr_scene_*` symbol set
+# (scenefx is a drop-in replacement, not a separate namespace), so link
+# order decides which implementation actually gets called for the
+# colliding names. Getting this backwards is a real, silent crash, not a
+# cosmetic issue: confirmed via gdb (`wlr_scene_node_set_enabled` resolving
+# into libwlroots-0.20.so's own copy, built against the *unextended*
+# wlr_scene_rect layout, walking a rect scenefx actually allocated with
+# its own larger struct -- a real ABI mismatch, not a wasp logic bug).
+# MangoWC's own meson.build confirms the same ordering
+# (libscenefx_dep listed before wlroots_dep in its dependencies list).
+LDLIBS    = `$(PKG_CONFIG) --libs $(PKGS)` $(SCENEFX_LIBS) $(WLR_LIBS) -lm $(LIBS)
 
 all: wasp wasp-list-windows
 wasp: wasp.o util.o luaconfig.o

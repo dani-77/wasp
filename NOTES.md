@@ -333,7 +333,18 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
    Hyprland's own rule model were flagged as reference material earlier
    but weren't actually consulted in the end -- mwc/MangoWC's C was closer
    to hand and sufficient on their own.
-7. **Rounded border corners, and blur too.** Reference for the *feel*:
+7. **Rounded border corners, and blur too.** **In progress (2026-08-15,
+   `scenefx` branch) -- corners done (Stages 0-2), verified nested
+   (border+content rounding, isfullscreen suppression, OPEN/CLOSE
+   `wasp.animations` interaction incl. the CLOSE-tween snapshot staying
+   rounded through the whole shrink). One thing this item's own research
+   below left as an open, unverified-either-way question is now
+   confirmed live: **XWayland clients get rounded corners too** (`xterm`
+   against DISPLAY from wasp's own lazy `wlr_xwayland_create`, screenshot
+   confirmed both border and content rounding, no special-casing needed
+   -- `wlr_scene_buffer_set_corner_radii()`/the border rect's
+   `clipped_region` apply the same regardless of client type). Blur
+   (Stages 3-4) still to come.** Reference for the *feel*:
    Daniel's own **spitfire** -- `spitfire.border = { width, active,
    inactive, radius }` (see its `examples/config.lua`), border drawn *on
    top of* the window, radius masks the window's own square corners along

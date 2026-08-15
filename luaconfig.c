@@ -25,6 +25,7 @@
  * all of them before we ever consult Lua, so a missing/broken config.lua
  * still yields a fully-usable compositor. */
 unsigned int borderpx;
+unsigned int border_radius; /* wasp.border.radius, see NOTES.md item 7 */
 int showbar;
 int topbar;
 const char *barlayout;
@@ -137,6 +138,7 @@ static void
 set_defaults(void)
 {
 	borderpx = 1;
+	border_radius = 0; /* off by default -- reproduces today's square corners bit-for-bit */
 	showbar = 1;
 	topbar = 1;
 	barlayout = "tln|s";
@@ -338,6 +340,7 @@ load_border(lua_State *L, int wasptbl)
 	read_int_field(L, t, "width", &borderpx);
 	read_color_field(L, t, "focus", &colors[1][2]);  /* SchemeSel  border */
 	read_color_field(L, t, "normal", &colors[0][2]); /* SchemeNorm border */
+	read_int_field(L, t, "radius", &border_radius);
 	lua_pop(L, 1);
 }
 

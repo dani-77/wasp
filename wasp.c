@@ -187,7 +187,20 @@ typedef struct {
 
 	Monitor *mon;
 	struct wlr_scene_tree *scene;
-	struct wlr_scene_rect *border[4]; /* top, bottom, left, right */
+	/* wasp: a single full-size rect (content + 2*bw) sitting *behind*
+	 * the content, corners rounded (wasp.border.radius) and a rounded
+	 * hole punched over the content area via
+	 * wlr_scene_rect_set_clipped_region() -- replaces dwm's original 4
+	 * separate strip rects (plain rects can't be rounded/blurred, and
+	 * scenefx's own tinywl.c reference confirms this exact single-rect
+	 * shape, see NOTES.md item 7). Positioned at local (0, 0) within
+	 * c->scene, same convention already used for everything else here
+	 * (c->scene's own node position is the outer, border-inclusive
+	 * box's top-left -- confirmed against MangoWC's own identical
+	 * positioning, not tinywl's negative-offset one, so nothing that
+	 * already assumes this (animations, item 9's sync_shield()) needs
+	 * to change). */
+	struct wlr_scene_rect *border;
 	struct wlr_scene_tree *scene_surface;
 	struct wl_list link;
 	struct wl_list flink;
@@ -405,6 +418,7 @@ static struct wlr_box zoom_box(struct wlr_box b, float ratio);
 static struct wlr_box open_animation_from(Client *c);
 static struct wlr_box tag_edge_box(Monitor *m, struct wlr_box real);
 static void scale_buffer_iter(struct wlr_scene_buffer *buffer, int sx, int sy, void *data);
+static void radius_buffer_iter(struct wlr_scene_buffer *buffer, int sx, int sy, void *data);
 static void apply_client_geom(Client *c, struct wlr_box vis);
 static void start_animation(Client *c);
 static void reschedule_all_outputs(void);
@@ -1101,20 +1115,56 @@ scale_buffer_iter(struct wlr_scene_buffer *buffer, int sx, int sy, void *data)
  * its own border rect for a frame or two instead -- much less jarring
  * than the truncation bug, and self-corrects within the tween's own
  * duration either way. */
+/* wasp: rounds a client's actual surface/subsurface content to match its
+ * border's own radius (NOTES.md item 7) -- popups (right-click menus,
+ * tooltips) are deliberately excluded, matching scenefx's own tinywl.c
+ * reference (output_configure_scene()) and MangoWC's buffer_set_effect().
+ * v1 simplification, documented and deliberate: applies one *uniform*
+ * radius to every non-popup buffer under a client, unlike ashwc's own
+ * position-checked "only the buffer's true outer corners" refinement --
+ * could in principle show a rounded corner on an inner subsurface
+ * positioned exactly at a client's own corner, an unusual layout in
+ * practice; revisit only if it turns out to actually matter. */
+static void
+radius_buffer_iter(struct wlr_scene_buffer *buffer, int sx, int sy, void *data)
+{
+	struct fx_corner_radii *radii = data;
+	struct wlr_scene_surface *ss;
+
+	if (!buffer->buffer)
+		return;
+	if ((ss = wlr_scene_surface_try_from_buffer(buffer))
+			&& wlr_xdg_popup_try_from_wlr_surface(ss->surface))
+		return;
+	wlr_scene_buffer_set_corner_radii(buffer, *radii);
+}
+
 static void
 apply_client_geom(Client *c, struct wlr_box vis)
 {
 	struct wlr_box clip;
+	struct fx_corner_radii radii;
 
 	wlr_scene_node_set_position(&c->scene->node, vis.x, vis.y);
 	wlr_scene_node_set_position(&c->scene_surface->node, c->bw, c->bw);
-	wlr_scene_rect_set_size(c->border[0], vis.width, c->bw);
-	wlr_scene_rect_set_size(c->border[1], vis.width, c->bw);
-	wlr_scene_rect_set_size(c->border[2], c->bw, vis.height - 2 * c->bw);
-	wlr_scene_rect_set_size(c->border[3], c->bw, vis.height - 2 * c->bw);
-	wlr_scene_node_set_position(&c->border[1]->node, 0, vis.height - c->bw);
-	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
-	wlr_scene_node_set_position(&c->border[3]->node, vis.width - c->bw, c->bw);
+
+	/* wasp: single full-size border rect (see the Client struct's own
+	 * comment, NOTES.md item 7) -- sized to the whole outer box, a
+	 * rounded hole (clipped_region) punched over the content sub-area
+	 * so it shows through cleanly, corners matching. isfullscreen
+	 * forces square corners (matches MangoWC's own behavior); radius 0
+	 * (wasp.border.radius unset, the default) reproduces today's exact
+	 * square-corner rendering either way. */
+	radii = (c->isfullscreen || !border_radius)
+			? corner_radii_none() : corner_radii_all((int)border_radius);
+	wlr_scene_rect_set_size(c->border, vis.width, vis.height);
+	wlr_scene_rect_set_corner_radii(c->border, radii);
+	wlr_scene_rect_set_clipped_region(c->border, (struct clipped_region){
+		.area = { (int)c->bw, (int)c->bw,
+			vis.width - 2 * (int)c->bw, vis.height - 2 * (int)c->bw },
+		.corners = radii,
+	});
+	wlr_scene_node_for_each_buffer(&c->scene_surface->node, radius_buffer_iter, &radii);
 
 	client_get_clip(c, &clip);
 	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
@@ -1506,7 +1556,7 @@ init_closing_client(Client *c)
 {
 	ClosingClient *cc;
 	struct snapshot_ctx ctx;
-	int i;
+	struct wlr_scene_rect *r;
 
 	if (!animations_enable || !animdur_close || !strcmp(animtype_close, "none")
 			|| !c->mon || !VISIBLEON(c, c->mon))
@@ -1521,11 +1571,15 @@ init_closing_client(Client *c)
 	ctx.oy = c->geom.y;
 	wlr_scene_node_for_each_buffer(&c->scene_surface->node, snapshot_buffer_iter, &ctx);
 
-	for (i = 0; i < 4; i++) {
-		struct wlr_scene_rect *r = wlr_scene_rect_create(cc->tree,
-				c->border[i]->width, c->border[i]->height, c->border[i]->color);
-		wlr_scene_node_set_position(&r->node, c->border[i]->node.x, c->border[i]->node.y);
-	}
+	/* wasp: single border rect, not 4 strips (NOTES.md item 7) --
+	 * corners/clipped_region cloned too, so a rounded border keeps
+	 * showing rounded through the whole CLOSE tween, not just its
+	 * width/height/color. */
+	r = wlr_scene_rect_create(cc->tree,
+			c->border->width, c->border->height, c->border->color);
+	wlr_scene_node_set_position(&r->node, c->border->node.x, c->border->node.y);
+	wlr_scene_rect_set_corner_radii(r, c->border->corners);
+	wlr_scene_rect_set_clipped_region(r, c->border->clipped_region);
 
 	cc->from = c->geom;
 	cc->to = !strcmp(animtype_close, "zoom") ? zoom_box(c->geom, animzoom_ratio) : c->geom;
@@ -3377,7 +3431,6 @@ mapnotify(struct wl_listener *listener, void *data)
 	Client *p = NULL;
 	Client *w, *c = wl_container_of(listener, c, map);
 	Monitor *m;
-	int i;
 
 	/* Create scene tree for this client and its border */
 	c->scene = client_surface(c)->data = wlr_scene_tree_create(layers[LyrTile]);
@@ -3417,11 +3470,16 @@ mapnotify(struct wl_listener *listener, void *data)
 		goto unset_fullscreen;
 	}
 
-	for (i = 0; i < 4; i++) {
-		c->border[i] = wlr_scene_rect_create(c->scene, 0, 0,
-			(float[])COLOR(colors[c->isurgent ? SchemeUrg : SchemeNorm][ColBorder]));
-		c->border[i]->node.data = c;
-	}
+	/* wasp: single rect, not 4 strips -- see the Client struct's own
+	 * comment on this, and NOTES.md item 7. Local (0, 0), lowered to
+	 * bottom so content (added right after, in the caller) renders on
+	 * top of it -- apply_client_geom() sizes/positions/rounds it on
+	 * every real geometry write from here on, this is just the initial
+	 * creation. */
+	c->border = wlr_scene_rect_create(c->scene, 0, 0,
+		(float[])COLOR(colors[c->isurgent ? SchemeUrg : SchemeNorm][ColBorder]));
+	c->border->node.data = c;
+	wlr_scene_node_lower_to_bottom(&c->border->node);
 
 	/* wasp: modern screen-capture protocol + per-window capture privacy
 	 * (NOTES.md item 9). shield is a plain opaque rect, disabled until
