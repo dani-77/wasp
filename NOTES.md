@@ -727,6 +727,35 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
    content also engages shields for flagged clients on a *different*
    output, same "small first version" discipline as `wasp.animations`.
 
+   **Follow-up, same day**: Daniel asked, reasonably, how a user would
+   actually *use* the single-window-capture side of this day to day --
+   `grim -T <identifier>` needs that identifier, and it's an opaque,
+   compositor-assigned string with no other way to discover it (not an
+   app_id, not a title). Also surfaced in that discussion: `grim -g
+   "$(slurp)"` (region-select) does *not* exercise the per-toplevel path
+   at all -- it's still an output-source capture with a client-side
+   crop, so `wlr_output_try_from_ext_image_capture_source_v1()` still
+   sees it as output-backed and a visible `shield_when_capture` window
+   elsewhere on that output still shields, even if the selected region
+   never touches it. Only the true `-T` path benefits from this item's
+   own narrowed-scope refinement above. Added `wasp-list-windows.c` -- a
+   small, separate, non-wlroots Wayland *client* (plain `wayland-client`,
+   `ext-foreign-toplevel-list-v1` only) that lists every open window's
+   app_id/title/identifier, filterable by app_id substring
+   (`wasp-list-windows -a firefox` prints just the matching
+   identifier(s), meant to be used as `grim -T "$(wasp-list-windows -a
+   firefox)"`). Built and installed alongside `wasp` itself (`Makefile`'s
+   `all`/`install`/`uninstall`/`dist` targets), with its own small
+   `WLWCFLAGS`/`WLWLIBS` rather than reusing `wasp`'s own `DWLCFLAGS` --
+   deliberately not linking `wayland-server`/wlroots at all, since it's
+   a client, not part of the compositor. No new dependency: `wayland-
+   client` ships in the same dev package (`wayland-devel` on Void) that
+   already provides `wayland-server`, which `wasp` itself already
+   requires. Verified end-to-end, nested: `wasp-list-windows` lists both
+   a flagged and unflagged test window correctly; piping its filtered
+   output straight into `grim -T` captures the unflagged one and is
+   refused (cleanly, no crash) for the flagged one.
+
 ## Core (not patch-derived)
 - **Lua config, live-reloadable — done (2026-08-12), bound-key trigger**:
   `wasp.c`'s `reload()` action (default bind: `mod+shift+r`, see

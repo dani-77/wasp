@@ -1,4 +1,5 @@
 wasp
+wasp-list-windows
 *.o
 *-protocol.c
 *-protocol.h

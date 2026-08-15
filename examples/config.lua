@@ -197,7 +197,11 @@ wasp.scratchpad = {
 -- manager, a terminal with secrets in scrollback, anything you don't
 -- want showing up in a recording by accident. Doesn't affect *other*
 -- windows' own capture -- someone sharing one specific different window
--- doesn't shield this one too.
+-- doesn't shield this one too. To capture a single window from the
+-- command line (`grim -T <identifier>`), see `wasp-list-windows` (built
+-- and installed alongside `wasp` itself) -- it lists every open
+-- window's app_id/title/identifier, since that identifier isn't
+-- otherwise discoverable: `grim -T "$(wasp-list-windows -a firefox)"`.
 --
 -- A given app's app_id isn't always as fixed as it looks -- some GTK/GLib
 -- apps report their prgname most of the time but fall back to their raw

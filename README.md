@@ -116,10 +116,17 @@ working:
 - **Modern screen-capture protocol**: `ext-image-copy-capture-v1` +
   `ext-image-capture-source-v1` + `ext-foreign-toplevel-list-v1`, so a
   client can request to capture one specific window, not just the whole
-  output — the legacy, wlroots-only, whole-output-only
-  `wlr-screencopy`/`wlr_export_dmabuf` pair (what `grim` still uses)
-  keeps working exactly as before, unreplaced, running alongside it. See
-  `wasp.rules`' `shield_when_capture` above for the privacy half.
+  output (`grim -T <identifier>`, portal-mediated window-picker share/
+  screenshot dialogs, ...) — the legacy, wlroots-only, whole-output-only
+  `wlr-screencopy`/`wlr_export_dmabuf` pair keeps working exactly as
+  before, unreplaced, running alongside it. `wasp-list-windows` (a small
+  separate CLI tool, `make`d and installed alongside `wasp` itself) lists
+  every open window's `app_id`/title/capture-identifier — the piece
+  `grim -T` can't get on its own, since that identifier is an opaque
+  per-window string, not something you'd otherwise know —
+  `grim -T "$(wasp-list-windows -a firefox)"` to capture just one window
+  by app_id substring. See `wasp.rules`' `shield_when_capture` above for
+  the privacy half.
 
 Not done yet: mouse-drag resize variety and more border styles. The full
 running list, plus which [dwl-patches] are earmarked for which feature and
@@ -135,6 +142,12 @@ Same dependencies as upstream dwl, plus Lua 5.4:
 - fcft, pixman, tllist (for the bar)
 - **lua5.4** (development headers — e.g. `lua54-devel` on Void Linux)
 - libxcb, libxcb-wm (XWayland — see below)
+
+`make` also builds `wasp-list-windows` (see Modern screen-capture
+protocol above) — a plain Wayland *client*, needs `wayland-client`'s
+headers/lib, but that's part of the same `wayland` dev package `wasp`
+itself already needs (`wayland-devel` on Void, same package that
+provides `wayland-server`), not a separate dependency to install.
 
 XWayland is built by default (needs a wlroots built with X11 support,
 which is the common case); disable it by commenting out the relevant
