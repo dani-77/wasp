@@ -437,6 +437,60 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
        `border_radius_corners.{top_left,top_right,bottom_left,
        bottom_right}`) would follow the same `luaconfig.c` field-reader
        pattern as `wasp.gaps`/`wasp.animations`.
+   - **[fenriz](https://github.com/zackb/fenriz)** (added 2026-08-15,
+     Daniel's find) -- another wasp-version match: wlroots **0.20** +
+     scenefx **0.5**, same as ashwc/wasp. Independent compositor (not a
+     dwl fork), written in **C++** (`src/*.cpp` + `.hpp`, `main.cpp` the
+     event loop, `view.cpp`/`server.cpp`/`output.cpp`/`background_blur.cpp`
+     the relevant pieces) -- inspected via fetched source, not cloned and
+     read line-by-line the way ashwc was, so treat specifics below as
+     less deeply verified than that entry, worth a closer read before
+     actually porting anything.
+     - **Border**: same wasp-relevant wrinkle already flagged for ashwc,
+       confirmed independently here -- the plain/non-gradient border case
+       is a *single* `wlr_scene_rect` per view
+       (`wlr_scene_rect_set_corner_radius(view->border, ...)` rounds it
+       directly), not 4 strips. Only its optional *gradient*-border mode
+       (`server.config.border_gradient`, active-window-only) swaps that
+       for 4 corner-piece rects + 4 edge `wlr_scene_buffer`s -- more
+       elaborate than wasp needs, not itself a reason to port, but
+       confirms the "collapse dwm's 4-strip border into 1 rect first" step
+       flagged for wasp under ashwc above really is the common
+       prerequisite, not an ashwc-specific quirk.
+     - Content-surface rounding via `wlr_scene_buffer_set_corner_radius`
+       (called from an `apply_fx` helper), and a shadow
+       (`wlr_scene_shadow_create` once at map, `set_color`/
+       `set_blur_sigma` updated live) -- same shape as ashwc's
+       border+shadow+per-buffer-radii trio.
+     - **Blur is per-window-surface only here** (`background_blur.cpp`,
+       `wlr_scene_blur` nodes placed under each surface's content,
+       region-clipped) -- no output-level `wlr_scene_optimized_blur`
+       wallpaper/background blur was found, unlike ashwc which does both.
+       Something to double check by actually reading the file rather than
+       trusting this summary if wallpaper blur specifically is ever
+       wanted from this reference.
+     - **Genuinely new idea not seen in ashwc/mwc/MangoWC**: fenriz
+       negotiates blur *regions* with the client itself, supporting both
+       `ext-background-effect-v1` (the newer, staged protocol) and the
+       legacy `org_kde_kwin_blur` ("kde-blur") protocol -- letting a
+       well-behaved client (e.g. a translucent terminal or launcher)
+       declare which part of its own surface wants blur-behind, rather
+       than wasp/ashwc's model of the compositor blanket-blurring an
+       entire window rule-by-rule. Orthogonal to the corner-radii/shadow
+       work above; worth keeping in mind as a later enhancement once
+       basic per-rule blur lands, not a blocker for the v1 scope already
+       written up under ashwc.
+     - **Xwayland**: unlike the "likely same gap, unverified" note left
+       for ashwc, fenriz's `view.cpp` does *not* appear to special-case
+       Xwayland out of borders/radii/blur/shadow -- the only Xwayland-
+       specific branch found is where the content geometry comes from
+       (`view->toplevel->base->geometry` for XDG vs
+       `view->xwl->surface->current.width/height` for X11), not an early
+       return skipping effects. Not confirmed live (same caveat as
+       above -- fetched, not run), but worth rechecking if the "Xwayland
+       doesn't get rounded corners" assumption carried over from the
+       stale dwl-patches README turns out to matter for wasp's own
+       XWayland-enabled build.
 
 8. **Touchpad gestures.** (2026-08-14, researched via ashwc after Daniel
    asked whether it'd be easy) -- wasp has no gesture code at all today
