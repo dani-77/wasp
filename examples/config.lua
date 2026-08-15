@@ -129,6 +129,19 @@ wasp.autostart = {
   -- it'll otherwise fight a separately-running PulseAudio for the same
   -- socket.
   -- { "pipewire" },
+  -- A polkit authentication agent -- without one, anything that asks for
+  -- privilege escalation via PolicyKit (NetworkManager's GUI, a package
+  -- manager front-end, mounting some removable drives, ...) just fails
+  -- silently instead of showing a password prompt, since Wayland has
+  -- nothing like X11's old suid-binary path for this. wasp doesn't ship
+  -- one itself (DE-agnostic, same stance as wallpaper/notifications
+  -- above) -- pick whichever your distro already has installed, e.g.
+  -- MATE's (what this file's own author actually runs, path may differ
+  -- by distro -- check `find /usr -iname '*polkit*agent*' 2>/dev/null`
+  -- if unsure), or swap for polkit-gnome/polkit-kde/lxqt-policykit/
+  -- xfce-polkit if you have one of those desktops' bits installed
+  -- instead:
+  -- { "/usr/libexec/polkit-mate-authentication-agent-1" },
 }
 
 -- Named scratchpads -- a hidden, toggleable floating window per slot.
@@ -357,9 +370,23 @@ bind({ "ctrl", "alt" }, "Terminate_Server", "quit")
 -- even if it wasn't perfectly straight. Only swipe gestures exist right now
 -- (no pinch/hold) -- see NOTES.md item 8.
 wasp.gestures = {
-  -- 3-finger swipe left/right between monitors, 4-finger up/down for
-  -- fullscreen toggle -- uncomment and adjust finger counts to taste.
+  -- 3-finger swipe left/right cycles focus between windows (same as
+  -- Mod+j/k) -- visible via the border color changing even with just one
+  -- monitor and two or more windows open. Uncomment and adjust finger
+  -- counts to taste.
+  -- { fingers = 3, direction = "left",  action = "focusstack", dir = -1 },
+  -- { fingers = 3, direction = "right", action = "focusstack", dir = 1 },
+  -- 4-finger up/down for fullscreen toggle.
+  -- { fingers = 4, direction = "up",    action = "togglefullscreen" },
+  -- 4-finger left/right -- next/previous workspace, wrapping (9 -> 1,
+  -- 1 -> 9). See "viewshift" in the action table above for what "next"
+  -- means here, since tags are a bitmask, not an ordered list.
+  -- { fingers = 4, direction = "left",  action = "viewshift", dir = -1 },
+  -- { fingers = 4, direction = "right", action = "viewshift", dir = 1 },
+  -- Alternative to the 3-finger set above, if you'd rather 3-finger
+  -- left/right move focus *between monitors* instead of within one (only
+  -- useful with 2+ monitors -- pick one or the other, not both, since
+  -- they'd otherwise fight over the same fingers/direction combo):
   -- { fingers = 3, direction = "left",  action = "focusmon", dir = "left" },
   -- { fingers = 3, direction = "right", action = "focusmon", dir = "right" },
-  -- { fingers = 4, direction = "up",    action = "togglefullscreen" },
 }
