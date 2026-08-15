@@ -13,11 +13,14 @@
 # or, once autostart lands in config.lua (see NOTES.md), spawn it from
 # there instead of by hand.
 #
-# Widgets, left to right: CPU, RAM, volume, battery, date/time. Battery
-# path is detected, not hardcoded -- BAT0 on some laptops, BAT1 on others
-# (this one), so the first /sys/class/power_supply/BAT* entry found wins,
-# same pattern used in Daniel's other WMs (pwm's battery_file_search(),
-# spitfire's read_battery_status()).
+# Widgets, left to right: CPU, RAM, volume, network, battery, date/time.
+# Battery path is detected, not hardcoded -- BAT0 on some laptops, BAT1 on
+# others (this one), so the first /sys/class/power_supply/BAT* entry found
+# wins, same pattern used in Daniel's other WMs (pwm's
+# battery_file_search(), spitfire's read_battery_status()). Network is the
+# same idea: the interface is *found* (whatever the default route is
+# actually using -- wlan0/wlp3s0/enp2s0/... all differ by machine and
+# driver), never assumed by name.
 #
 # Feel free to treat this as a starting point rather than gospel -- swap
 # widgets, reorder them, change the separator, whatever. It's just a shell
@@ -51,6 +54,41 @@ volume() {
 		| awk '{printf "Vol %s", $1}'
 }
 
+network() {
+	# Whichever interface the default route is actually on -- wired,
+	# wireless, or a VPN tunnel, no name assumed. Needs `ip` (iproute2);
+	# silently shows nothing if it's missing, same as the other widgets
+	# do when their own tool/file isn't there.
+	iface=$(ip route show default 2>/dev/null | awk '/^default/ {print $5; exit}')
+	[ -n "$iface" ] || { printf 'Net down'; return 0; }
+
+	# The kernel only creates this directory for actual wireless
+	# interfaces -- distinguishes wired/wireless without parsing the
+	# interface's own name (wlp0s20f3 vs enp2s0 vs eth0, ...).
+	if [ -d "/sys/class/net/$iface/wireless" ]; then
+		# Link quality is kernel-reported (no extra tool needed), out of
+		# a conventional max of 70 -- some drivers don't report it, hence
+		# the fallback below. SSID needs `iw` (optional -- degrades to
+		# just the quality, or to a bare "Net wifi", if it's not
+		# installed or the driver doesn't say).
+		quality=$(awk -v i="$iface:" '$1==i {printf "%d", ($3+0)/70*100}' /proc/net/wireless)
+		ssid=""
+		command -v iw >/dev/null 2>&1 && ssid=$(iw dev "$iface" link 2>/dev/null \
+			| awk -F': ' '/^\tSSID/ {print $2; exit}')
+		if [ -n "$ssid" ] && [ -n "$quality" ]; then
+			printf 'Net %s %s%%' "$ssid" "$quality"
+		elif [ -n "$ssid" ]; then
+			printf 'Net %s' "$ssid"
+		elif [ -n "$quality" ]; then
+			printf 'Net wifi %s%%' "$quality"
+		else
+			printf 'Net wifi'
+		fi
+	else
+		printf 'Net wired'
+	fi
+}
+
 battery() {
 	[ -n "$BAT" ] || return 0
 	cap=$(cat "$BAT/capacity" 2>/dev/null)
@@ -80,7 +118,7 @@ clock() {
 trap 'exit 0' TERM INT PIPE
 
 while :; do
-	printf '%s\n' "$(cpu) | $(ram) | $(volume) | $(battery) | $(clock)" || exit 0
+	printf '%s\n' "$(cpu) | $(ram) | $(volume) | $(network) | $(battery) | $(clock)" || exit 0
 	sleep 5 &
 	wait $! 2>/dev/null
 done
