@@ -119,14 +119,32 @@ working:
   output (`grim -T <identifier>`, portal-mediated window-picker share/
   screenshot dialogs, ...) — the legacy, wlroots-only, whole-output-only
   `wlr-screencopy`/`wlr_export_dmabuf` pair keeps working exactly as
-  before, unreplaced, running alongside it. `wasp-list-windows` (a small
-  separate CLI tool, `make`d and installed alongside `wasp` itself) lists
-  every open window's `app_id`/title/capture-identifier — the piece
-  `grim -T` can't get on its own, since that identifier is an opaque
-  per-window string, not something you'd otherwise know —
-  `grim -T "$(wasp-list-windows -a firefox)"` to capture just one window
-  by app_id substring. See `wasp.rules`' `shield_when_capture` above for
-  the privacy half.
+  before, unreplaced, running alongside it. See `wasp.rules`'
+  `shield_when_capture` above for the privacy half.
+- **`wasp-list-windows`**: a small separate CLI tool (`make`d and
+  installed alongside `wasp` itself, own binary) that lists every open
+  window's `app_id`/title/capture-identifier — the piece `grim -T` can't
+  get on its own, since that identifier is an opaque, compositor-assigned
+  string with no other way to discover it:
+
+  ```sh
+  $ wasp-list-windows
+  8caf7205bfd6065e1df7ea72bae88763     firefox                  Mozilla Firefox
+  fc02604939238c1c93a85ea9d1f0eb68     foot                     ~
+
+  # -a <app_id-substring> prints just the matching identifier(s), meant
+  # to be piped straight into grim -T:
+  $ grim -T "$(wasp-list-windows -a firefox)" firefox-window.png
+  ```
+
+  A `shield_when_capture` window still shows up in the listing (this
+  only lists windows, it doesn't request to capture any of them) — but
+  `grim -T` against its identifier is refused, same as any other
+  single-window capture request for it. Note this only covers the real
+  `-T` path: `grim -g "$(slurp)"` (region-select) is still a whole-
+  *output* capture with a client-side crop under the hood, so a visible
+  `shield_when_capture` window elsewhere on that output still shields
+  even if the selected region never touches it.
 
 Not done yet: mouse-drag resize variety and more border styles. The full
 running list, plus which [dwl-patches] are earmarked for which feature and
