@@ -14,7 +14,7 @@ wasp keeps dwl's own goals — small, hackable, few dependencies, suckless
 in spirit — and pulls in a handful of [dwl-patches] adapted to fit this
 model rather than `config.h` + recompile.
 
-## Status (2026-08-14)
+## Status (2026-08-15)
 
 Most of the day-to-day compositor is Lua-driven now. What's actually
 working:
@@ -64,10 +64,16 @@ working:
   the first time it's toggled (bound via the `toggle-scratchpad` action)
   and hidden/shown (not killed/respawned) on every toggle after that.
 - **Window rules**: `wasp.rules = { { app_id=, title=, tags=, floating=,
-  monitor=, center= }, ... }` — send specific apps to a workspace, make
-  them open floating, pin them to a monitor, or re-center them at their
-  own requested size instead of wherever they happened to want to place
-  themselves (often the top-left corner).
+  monitor=, center=, shield_when_capture= }, ... }` — send specific apps
+  to a workspace, make them open floating, pin them to a monitor, or
+  re-center them at their own requested size instead of wherever they
+  happened to want to place themselves (often the top-left corner).
+  `shield_when_capture` refuses that window's own single-window capture
+  requests and blanks it for the duration of any real whole-output
+  capture (recording/screen-share) — it's the same on-screen content, so
+  you see the blank too for as long as capture is live, a visible cue
+  that it's protected, not a hidden swap; reverts to normal the instant
+  capture ends, so it's never a permanent placeholder.
 - **Workspaces exposed over `ext-workspace-v1`**: one workspace group per
   monitor, one workspace per tag inside it — so any bar/shell that speaks
   the protocol (not a dwl/wasp-specific thing to build against) sees and
@@ -107,6 +113,13 @@ working:
   here too), matched by finger count (0/omitted = any) and direction
   (`"left"`/`"right"`/`"up"`/`"down"`, classified from the swipe's dominant
   axis once it ends). Swipe only — no pinch/hold yet.
+- **Modern screen-capture protocol**: `ext-image-copy-capture-v1` +
+  `ext-image-capture-source-v1` + `ext-foreign-toplevel-list-v1`, so a
+  client can request to capture one specific window, not just the whole
+  output — the legacy, wlroots-only, whole-output-only
+  `wlr-screencopy`/`wlr_export_dmabuf` pair (what `grim` still uses)
+  keeps working exactly as before, unreplaced, running alongside it. See
+  `wasp.rules`' `shield_when_capture` above for the privacy half.
 
 Not done yet: mouse-drag resize variety and more border styles. The full
 running list, plus which [dwl-patches] are earmarked for which feature and

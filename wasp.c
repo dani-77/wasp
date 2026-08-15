@@ -28,6 +28,9 @@
 #include <wlr/types/wlr_drm.h>
 #include <wlr/types/wlr_export_dmabuf_v1.h>
 #include <wlr/types/wlr_ext_data_control_v1.h>
+#include <wlr/types/wlr_ext_foreign_toplevel_list_v1.h>
+#include <wlr/types/wlr_ext_image_capture_source_v1.h>
+#include <wlr/types/wlr_ext_image_copy_capture_v1.h>
 #include <wlr/types/wlr_ext_workspace_v1.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
 #include <wlr/types/wlr_gamma_control_v1.h>
@@ -217,6 +220,20 @@ typedef struct {
 	 * survives a config reload even though that array gets rebuilt from
 	 * scratch each time. */
 	const char *scratchpad;
+	/* wasp: modern screen-capture protocol + per-window capture privacy
+	 * (NOTES.md item 9) -- ext_toplevel/capture_scene/capture_source let
+	 * a client request to capture just this one window instead of a
+	 * whole output (see mapnotify()/unmapnotify() and
+	 * handle_new_toplevel_capture_request()); shield_when_capture (set
+	 * from wasp.rules, see applyrules()) refuses that per-window request
+	 * outright, and shield is a solid rect swapped in for the duration
+	 * of any real whole-output capture session regardless of which
+	 * client is being captured (see sync_shield()). */
+	struct wlr_ext_foreign_toplevel_handle_v1 *ext_toplevel;
+	struct wlr_scene *capture_scene;
+	struct wlr_ext_image_capture_source_v1 *capture_source;
+	struct wlr_scene_rect *shield;
+	int shield_when_capture;
 } Client;
 
 /* Key is defined in luaconfig.h now too -- luaconfig.c builds keys[]
@@ -382,6 +399,11 @@ static void tagout(Client *c, Monitor *m);
 static void snapshot_buffer_iter(struct wlr_scene_buffer *buffer, int sx, int sy, void *data);
 static void init_closing_client(Client *c);
 static int tick_closing_clients(void);
+/* wasp: modern screen-capture protocol + per-window capture privacy
+ * (wasp.rules' shield_when_capture, see NOTES.md item 9) */
+static void sync_shield(Client *c, struct wlr_box vis);
+static void handle_new_toplevel_capture_request(struct wl_listener *listener, void *data);
+static void handle_image_copy_capture_new_session(struct wl_listener *listener, void *data);
 static void arrange(Monitor *m);
 static void arrangelayer(Monitor *m, struct wl_list *list,
 		struct wlr_box *usable_area, int exclusive);
@@ -573,6 +595,21 @@ static struct wlr_cursor_shape_manager_v1 *cursor_shape_mgr;
 static struct wlr_output_power_manager_v1 *power_mgr;
 static struct wlr_ext_workspace_manager_v1 *ext_workspace_mgr; /* wasp: see createmon()/updateextworkspaces() */
 
+/* wasp: modern screen-capture protocol (NOTES.md item 9) -- per-window
+ * capture (foreign_toplevel_list + ext_toplevel_capture_mgr) alongside
+ * the legacy whole-output-only wlr-screencopy/wlr_export_dmabuf pair
+ * (untouched, see setup()); ext_image_copy_capture_mgr backs *both* the
+ * per-output and per-toplevel capture paths, so its new_session handler
+ * (handle_image_copy_capture_new_session()) has to tell them apart
+ * itself (via wlr_output_try_from_ext_image_capture_source_v1()) before
+ * touching active_output_captures -- see that function's own comment.
+ * active_output_captures is a global counter, not per-output (a known,
+ * accepted v1 simplification -- see NOTES.md). */
+static struct wlr_ext_foreign_toplevel_list_v1 *foreign_toplevel_list;
+static struct wlr_ext_foreign_toplevel_image_capture_source_manager_v1 *ext_toplevel_capture_mgr;
+static struct wlr_ext_image_copy_capture_manager_v1 *ext_image_copy_capture_mgr;
+static int active_output_captures;
+
 static struct wlr_pointer_constraints_v1 *pointer_constraints;
 static struct wlr_relative_pointer_manager_v1 *relative_pointer_mgr;
 static struct wlr_pointer_constraint_v1 *active_constraint;
@@ -636,6 +673,8 @@ static struct wl_listener output_mgr_apply = {.notify = outputmgrapply};
 static struct wl_listener output_mgr_test = {.notify = outputmgrtest};
 static struct wl_listener output_power_mgr_set_mode = {.notify = powermgrsetmode};
 static struct wl_listener ext_workspace_commit = {.notify = extworkspacecommit};
+static struct wl_listener new_toplevel_capture_request = {.notify = handle_new_toplevel_capture_request};
+static struct wl_listener image_copy_capture_new_session = {.notify = handle_image_copy_capture_new_session};
 static struct wl_listener request_activate = {.notify = urgent};
 static struct wl_listener request_cursor = {.notify = setcursor};
 static struct wl_listener request_set_psel = {.notify = setpsel};
@@ -777,6 +816,7 @@ applyrules(Client *c)
 			c->isfloating = r->isfloating;
 			center = r->center;
 			newtags |= r->tags;
+			c->shield_when_capture = r->shield_when_capture;
 			i = 0;
 			wl_list_for_each(m, &mons, link) {
 				if (r->monitor == i++)
@@ -1063,6 +1103,52 @@ apply_client_geom(Client *c, struct wlr_box vis)
 
 	client_get_clip(c, &clip);
 	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
+
+	/* wasp: keep a capture-time shield tracking this client through
+	 * every real geometry write, animated (wasp.animations MOVE) or
+	 * not -- see NOTES.md item 9. */
+	sync_shield(c, vis);
+}
+
+/* wasp: modern screen-capture protocol + per-window capture privacy
+ * (NOTES.md item 9). Engages/disengages/repositions c->shield (a solid
+ * rect covering just this client's content area, same footprint as
+ * scene_surface) so it exactly tracks whatever's currently the source
+ * of truth for this client's on-screen box -- vis from
+ * apply_client_geom() while animating/moving, c->geom from arrange()'s
+ * instant-toggle branch and tagin()/tagout()'s own first synchronous
+ * apply (their own subsequent animation ticks go through
+ * apply_client_geom() like everything else). A no-op for unmanaged
+ * clients (c->shield is only ever created for managed ones, see
+ * mapnotify()). */
+static void
+sync_shield(Client *c, struct wlr_box vis)
+{
+	int want;
+
+	if (!c->shield)
+		return;
+
+	/* c->scene->node.enabled, not VISIBLEON() -- a client mid-TAG-out
+	 * (wasp.animations on) deliberately keeps that node enabled for its
+	 * whole slide-out duration even though VISIBLEON() already reads
+	 * false the instant the tag switch begins (see tagout()'s own
+	 * comment) -- content is still genuinely on screen and capturable
+	 * throughout that tween, so the shield has to stay engaged for it
+	 * too, only disengaging once animate_client() actually disables the
+	 * node on completion. */
+	want = c->shield_when_capture && active_output_captures
+			&& c->mon && c->scene->node.enabled;
+	if (want) {
+		/* c->shield is a child of c->scene, same as the border rects --
+		 * position is relative to it (already at vis.x/vis.y), not
+		 * absolute, matching border[1..3]'s own convention above. */
+		wlr_scene_node_set_position(&c->shield->node, c->bw, c->bw);
+		wlr_scene_rect_set_size(c->shield,
+				vis.width - 2 * c->bw, vis.height - 2 * c->bw);
+		wlr_scene_node_raise_to_top(&c->shield->node);
+	}
+	wlr_scene_node_set_enabled(&c->shield->node, want);
 }
 
 /* Called from resize() once its real head (bounds/geom/applybounds/
@@ -1293,6 +1379,11 @@ animate_client(Client *c)
 	if (c->anim.tag_hide_after) {
 		wlr_scene_node_set_enabled(&c->scene->node, 0);
 		c->anim.tag_hide_after = 0;
+		/* wasp: the client is now genuinely off screen -- disengage its
+		 * shield (if any) right away rather than waiting for a geometry
+		 * write that may never come while it stays hidden. NOTES.md
+		 * item 9. */
+		sync_shield(c, c->geom);
 	}
 	c->anim.action = AnimNone;
 	return 0;
@@ -1319,6 +1410,12 @@ tagin(Client *c, Monitor *m)
 {
 	wlr_scene_node_set_enabled(&c->scene->node, 1);
 	client_set_suspended(c, 0);
+	/* wasp: refresh shield state now (NOTES.md item 9) -- the resize()
+	 * below (and the layout's own subsequent pass for a tiled client)
+	 * will keep it in sync via apply_client_geom() from here on, but a
+	 * client becoming visible needs its shield to engage/disengage
+	 * right away too, not just on its next real geometry write. */
+	sync_shield(c, c->geom);
 	if (c->anim.running && c->anim.action == AnimOpen)
 		return;
 	c->anim.tag_hide_after = 0;
@@ -1349,6 +1446,15 @@ tagout(Client *c, Monitor *m)
 	c->anim.time_started = now_ms();
 	c->anim.duration = anim_duration(AnimTag);
 	client_set_suspended(c, 1);
+	/* wasp: c->scene->node.enabled deliberately doesn't change here (see
+	 * this function's own comment above) -- content is still on screen
+	 * through the whole slide-out, so a shield that was already engaged
+	 * stays engaged; this call only matters if shield_when_capture/
+	 * active_output_captures somehow changed in the same tick this
+	 * client started tagging out. Real disengagement happens where the
+	 * node actually gets disabled, in animate_client()'s tag_hide_after
+	 * completion handling. NOTES.md item 9. */
+	sync_shield(c, c->geom);
 	reschedule_all_outputs();
 }
 
@@ -1467,6 +1573,89 @@ tick_closing_clients(void)
 	return more;
 }
 
+/* wasp: modern screen-capture protocol + per-window capture privacy
+ * (NOTES.md item 9). A flagged client's own single-window capture
+ * request is refused outright -- the request is simply never accepted,
+ * so the requesting client gets nothing rather than a shielded/blank
+ * frame, same choice MangoWC makes. Otherwise lazily creates this
+ * client's capture_source the first time it's actually needed (event_loop/
+ * alloc/drw are all existing wasp.c globals, set well before setup()
+ * reaches the manager-creation calls that wire this handler up). */
+static void
+handle_new_toplevel_capture_request(struct wl_listener *listener, void *data)
+{
+	struct wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request *request = data;
+	Client *c = request->toplevel_handle->data;
+
+	if (!c || c->shield_when_capture)
+		return;
+
+	if (!c->capture_source && c->capture_scene)
+		c->capture_source = wlr_ext_image_capture_source_v1_create_with_scene_node(
+				&c->capture_scene->tree.node, event_loop, alloc, drw);
+	if (!c->capture_source)
+		return;
+
+	wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request_accept(
+			request, c->capture_source);
+}
+
+/* wasp: allocated per live whole-output capture session (see
+ * handle_image_copy_capture_new_session() below) purely to get a place
+ * to hang a self-removing destroy listener off of -- active_output_captures
+ * is the only state that actually matters, nothing else needs tracking
+ * per session. NOTES.md item 9. */
+struct capture_session_tracker {
+	struct wl_listener destroy;
+};
+
+static void
+handle_image_copy_capture_session_destroy(struct wl_listener *listener, void *data)
+{
+	struct capture_session_tracker *tracker =
+			wl_container_of(listener, tracker, destroy);
+	Client *c;
+
+	active_output_captures--;
+	wl_list_remove(&tracker->destroy.link);
+	free(tracker);
+
+	wl_list_for_each(c, &clients, link)
+		sync_shield(c, c->geom);
+}
+
+/* Backs *both* wlr_ext_output_image_capture_source_manager_v1's whole-
+ * output sessions and wlr_ext_foreign_toplevel_image_capture_source_manager_v1's
+ * single-window ones -- the two share this one manager/signal downstream
+ * of whichever source created the session, so this handler has to tell
+ * them apart itself before touching active_output_captures. Confirmed
+ * via wlr_output_try_from_ext_image_capture_source_v1()'s own doc
+ * comment: returns NULL for a source that isn't output-backed. This is
+ * a deliberate narrowing from MangoWC's own equivalent (`mango.c`,
+ * `handle_iamge_copy_capture_new_session()`), which engages a
+ * shield_when_capture window's shield on *any* capture session at all,
+ * including someone else's single, unrelated window -- confirmed with
+ * Daniel (2026-08-15) that only genuine whole-output sessions should
+ * count for wasp. */
+static void
+handle_image_copy_capture_new_session(struct wl_listener *listener, void *data)
+{
+	struct wlr_ext_image_copy_capture_session_v1 *capture_session = data;
+	struct capture_session_tracker *tracker;
+	Client *c;
+
+	if (!wlr_output_try_from_ext_image_capture_source_v1(capture_session->source))
+		return;
+
+	tracker = ecalloc(1, sizeof(*tracker));
+	tracker->destroy.notify = handle_image_copy_capture_session_destroy;
+	wl_signal_add(&capture_session->events.destroy, &tracker->destroy);
+
+	active_output_captures++;
+	wl_list_for_each(c, &clients, link)
+		sync_shield(c, c->geom);
+}
+
 void
 arrange(Monitor *m)
 {
@@ -1492,6 +1681,10 @@ arrange(Monitor *m)
 		if (!animations_enable || !animdur_tag) {
 			wlr_scene_node_set_enabled(&c->scene->node, vis);
 			client_set_suspended(c, !vis);
+			/* wasp: no animation tween will ever tick apply_client_geom()
+			 * for this client to refresh its shield, so do it here
+			 * directly -- NOTES.md item 9. */
+			sync_shield(c, c->geom);
 			continue;
 		}
 		if (vis && (!c->scene->node.enabled || c->anim.tag_hide_after))
@@ -3210,6 +3403,36 @@ mapnotify(struct wl_listener *listener, void *data)
 		c->border[i]->node.data = c;
 	}
 
+	/* wasp: modern screen-capture protocol + per-window capture privacy
+	 * (NOTES.md item 9). shield is a plain opaque rect, disabled until
+	 * sync_shield() has a reason to show it -- not theme-colored on
+	 * purpose, so it reads unambiguously as "hidden from capture", not
+	 * as a themed border/background. foreign-toplevel handle + the
+	 * standalone capture_scene (a tiny scene root holding just this
+	 * client's own surface, decoupled from c->scene so a single-window
+	 * capture request still works while this client is on a currently
+	 * inactive tag, where arrange() disables c->scene->node) both get
+	 * created eagerly here, same as the border rects -- the actual
+	 * per-window capture *source* (capture_source) stays lazy, only
+	 * created on this client's first real capture request, see
+	 * handle_new_toplevel_capture_request(). */
+	c->shield = wlr_scene_rect_create(c->scene, 0, 0, (float[]){0, 0, 0, 1});
+	c->shield->node.data = c;
+	wlr_scene_node_set_enabled(&c->shield->node, 0);
+	if (foreign_toplevel_list) {
+		struct wlr_ext_foreign_toplevel_handle_v1_state toplevel_state = {
+			.app_id = client_get_appid(c),
+			.title = client_get_title(c),
+		};
+		c->ext_toplevel = wlr_ext_foreign_toplevel_handle_v1_create(
+				foreign_toplevel_list, &toplevel_state);
+		if (c->ext_toplevel) {
+			c->ext_toplevel->data = c;
+		}
+	}
+	if ((c->capture_scene = wlr_scene_create()))
+		wlr_scene_surface_create(&c->capture_scene->tree, client_surface(c));
+
 	/* Initialize client geometry with room for border */
 	client_set_tiled(c, WLR_EDGE_TOP | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT | WLR_EDGE_RIGHT);
 	c->geom.width += 2 * c->bw;
@@ -4162,6 +4385,24 @@ setup(void)
 	wlr_data_device_manager_create(dpy);
 	wlr_export_dmabuf_manager_v1_create(dpy);
 	wlr_screencopy_manager_v1_create(dpy);
+	/* wasp: modern screen-capture protocol (NOTES.md item 9) -- kept
+	 * running side by side with the legacy whole-output-only pair just
+	 * above, not replacing it (same choice MangoWC makes, and the safe
+	 * one: wasp's own grim+Print keybind in examples/config.lua depends
+	 * on wlr-screencopy working exactly as it does today).
+	 * wlr_ext_output_image_capture_source_manager_v1 needs no signal
+	 * hookup of its own -- it just answers "give me this output's
+	 * capture source" requests directly, no new_request/new_session
+	 * event to react to (unlike the per-toplevel manager below). */
+	wlr_ext_output_image_capture_source_manager_v1_create(dpy, 1);
+	if ((foreign_toplevel_list = wlr_ext_foreign_toplevel_list_v1_create(dpy, 1))
+			&& (ext_toplevel_capture_mgr =
+				wlr_ext_foreign_toplevel_image_capture_source_manager_v1_create(dpy, 1)))
+		wl_signal_add(&ext_toplevel_capture_mgr->events.new_request,
+				&new_toplevel_capture_request);
+	if ((ext_image_copy_capture_mgr = wlr_ext_image_copy_capture_manager_v1_create(dpy, 1)))
+		wl_signal_add(&ext_image_copy_capture_mgr->events.new_session,
+				&image_copy_capture_new_session);
 	wlr_data_control_manager_v1_create(dpy);
 	wlr_ext_data_control_manager_v1_create(dpy, 1);
 	wlr_primary_selection_v1_device_manager_create(dpy);
@@ -4770,6 +5011,18 @@ unmapnotify(struct wl_listener *listener, void *data)
 		wl_list_remove(&c->link);
 		setmon(c, NULL, 0);
 		wl_list_remove(&c->flink);
+
+		/* wasp: modern screen-capture protocol (NOTES.md item 9).
+		 * capture_source's own lifetime is tied to capture_scene's root
+		 * node per wlr_ext_image_capture_source_v1_create_with_scene_node()'s
+		 * own contract (its events.destroy fires off that node going
+		 * away), so destroying capture_scene alone is enough -- no
+		 * separate call needed even if a capture_source was ever lazily
+		 * created for this client. */
+		if (c->ext_toplevel)
+			wlr_ext_foreign_toplevel_handle_v1_destroy(c->ext_toplevel);
+		if (c->capture_scene)
+			wlr_scene_node_destroy(&c->capture_scene->tree.node);
 	}
 
 	wlr_scene_node_destroy(&c->scene->node);
@@ -4929,6 +5182,16 @@ updatetitle(struct wl_listener *listener, void *data)
 	Client *c = wl_container_of(listener, c, set_title);
 	if (c == focustop(c->mon))
 		drawbars();
+	/* wasp: keep the foreign-toplevel handle's title in sync (NOTES.md
+	 * item 9) -- app_id isn't tracked here since dwl/wasp never listen
+	 * for it changing post-map at all, matching upstream's own scope;
+	 * title is the only field that can actually change on this path. */
+	if (c->ext_toplevel)
+		wlr_ext_foreign_toplevel_handle_v1_update_state(c->ext_toplevel,
+				&(struct wlr_ext_foreign_toplevel_handle_v1_state){
+					.app_id = client_get_appid(c),
+					.title = client_get_title(c),
+				});
 }
 
 void

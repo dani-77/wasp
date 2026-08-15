@@ -15,8 +15,8 @@ blur/rounded corners), #8 (touchpad gestures), and #9 (modern
 screen-capture protocol + per-window capture privacy) were queued in
 after, 2026-08-13/14 -- #8 and #9 have no rendering-code dependency on
 #7 and are independent of each other too, so either is fine to pick up
-first. **2026-08-15: #8 done** (see its own note) -- #7 and #9 remain,
-still independent of each other:
+first. **2026-08-15: #8 and #9 done** (see their own notes) -- #7
+remains, parked at Daniel's explicit call to pick up #9 first:
 
 1. **Keyboard-only window resize/move.** **Scoped down (2026-08-12)**:
    not a sway/i3 modal resize-mode after all — Daniel's call was to keep
@@ -593,12 +593,13 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
    itself to -- worth an actual touchpad test on real hardware before
    fully trusting this.
 
-9. **Modern screen-capture protocol (`ext-image-copy-capture-v1`) +
-   per-window capture privacy.** (2026-08-14, researched via MangoWC
-   after Daniel asked how ashwc's `wlr-screencopy` compared to wasp's own
-   -- turned out to be a non-question, both are identical one-liners, but
-   it surfaced this real gap instead). wasp today only creates the
-   legacy pair -- `wlr_export_dmabuf_manager_v1_create(dpy)` +
+9. ~~**Modern screen-capture protocol (`ext-image-copy-capture-v1`) +
+   per-window capture privacy.**~~ **Done (2026-08-15)** (researched
+   2026-08-14 via MangoWC after Daniel asked how ashwc's `wlr-screencopy`
+   compared to wasp's own -- turned out to be a non-question, both are
+   identical one-liners, but it surfaced this real gap instead). wasp
+   before this only created the legacy pair --
+   `wlr_export_dmabuf_manager_v1_create(dpy)` +
    `wlr_screencopy_manager_v1_create(dpy)`, right next to
    `wlr_data_device_manager_create()` in `wasp.c`'s `setup()` -- and so
    does ashwc (`src/ashwc.c`, same two calls, nothing else, confirmed
@@ -643,19 +644,88 @@ Two more added 2026-08-12 (not yet ordered relative to the three above):
      duration of that capture session, reverting the moment it ends --
      session-aware, not a static always-on placeholder that would also
      hide the window from the user's own eyes.
-   Not yet done: nothing landed in wasp for this. Config surface would
-   be a new field on `wasp.rules` entries (`shield_when_capture = true`,
-   alongside the existing `app_id`/`title`/`tags`/`floating`/etc.
-   matchers wasp already parses) plus the new manager-creation calls in
-   `setup()`; the "look up a client's own scene subtree" step MangoWC
-   and ashwc both do is already something wasp's rules/scratchpad code
-   does routinely, so the wiring shape is familiar even though the
-   protocol itself is new. Open question worth settling before starting:
-   whether to keep the legacy `wlr-screencopy` pair running alongside the
-   new protocol (safer, broader client compatibility today) or replace
-   it outright -- depends on how widely `ext-image-copy-capture-v1`
-   support has actually landed in the portal/screenshot tools wasp users
-   rely on, not checked yet.
+   **Built** (2026-08-15, on the `capture-privacy` branch, plan-mode
+   approved before implementation): `wlr_ext_foreign_toplevel_list_v1` +
+   `wlr_ext_foreign_toplevel_image_capture_source_manager_v1` +
+   `wlr_ext_output_image_capture_source_manager_v1` +
+   `wlr_ext_image_copy_capture_manager_v1`, wired up right next to the
+   legacy pair in `setup()`, kept running alongside it unreplaced (the
+   open question above is resolved this way -- matches MangoWC's own
+   choice, and is the safe default: `grim`+`Print`, already in
+   `examples/config.lua`, only speaks `wlr-screencopy`). Every managed
+   client gets a `wlr_ext_foreign_toplevel_handle_v1` (kept in sync with
+   `updatetitle()`) plus a small standalone `wlr_scene` root
+   (`Client.capture_scene`, just that client's own surface, no borders)
+   at map time -- deliberately *not* reusing the real on-screen
+   `c->scene` tree as the capture source, since `arrange()` disables
+   that node while a client is on an inactive tag, which would silently
+   break single-window capture for a hidden-but-still-capturable window
+   (a real, expected case for a window-picker share dialog). The actual
+   `wlr_ext_image_capture_source_v1` stays lazy, created on that
+   client's first real capture request.
+
+   `wasp.rules` gained `shield_when_capture` (last-match-wins, same as
+   `isfloating`/`center`). Two effects: a flagged client's own
+   single-window capture request is refused outright (early return in
+   `handle_new_toplevel_capture_request()`, mirroring MangoWC's own
+   function of the same name); and a solid `wlr_scene_rect`
+   (`Client.shield`) swaps in for its content for the duration of any
+   real whole-*output* capture session, tracked via a global
+   `active_output_captures` counter incremented/decremented by
+   `handle_image_copy_capture_new_session()`/its per-session destroy
+   listener, and kept in sync with the client's actual on-screen
+   presence (`sync_shield()`, called from `apply_client_geom()` --
+   covers `wasp.animations` MOVE tweens too -- plus `arrange()`'s
+   instant-toggle branch, `tagin()`/`tagout()`, and
+   `animate_client()`'s tag-out completion, since not all of those
+   route through `apply_client_geom()`).
+
+   **Correction to this item's own earlier research note above** (the
+   "session-aware, not a static always-on placeholder that would also
+   hide the window from the user's own eyes" line): confirmed live,
+   pixel-checked (nested `grim`, before/after screenshots) once actually
+   built -- the shield genuinely *does* also show on the real output,
+   for the whole duration any real whole-output capture session is
+   live, not just in what gets captured. This is inherent to the
+   design, wasp's own and MangoWC's real one alike (re-read
+   `client_draw_shield()` in `mango.c`'s `animation/client.h` to
+   confirm): `c->shield` is a node in the *same* on-screen `c->scene`
+   tree the real output renders every frame, not a separate off-screen-
+   only composite, so there's no way for it to differ between what the
+   user sees live and what a capture session sees at the same instant
+   without a much bigger, per-frame-interception redesign -- clearly
+   out of scope here. In practice this is arguably the better UX
+   anyway: a visible cue that "this window is currently capture-
+   protected" rather than a silent swap only the recording would show.
+   What *is* still accurate: it's session-aware, not a permanent
+   placeholder -- reverts to normal the instant no real whole-output
+   session is live, confirmed via the same before/after test.
+
+   **One real refinement over MangoWC's own implementation**, found
+   while reading its actual current source (`mango.c`, the renamed/
+   newer fork of `mangowc` already used for item 3's animations) and
+   confirmed with Daniel before building: MangoWC engages a
+   `shield_when_capture` window's shield on *any* live capture session
+   at all -- including someone else's single, unrelated window capture,
+   since `wlr_ext_image_copy_capture_manager_v1` backs both the
+   per-output and per-toplevel paths through the same
+   `events.new_session` signal, and MangoWC's own handler doesn't tell
+   them apart. wasp's `handle_image_copy_capture_new_session()` does,
+   via `wlr_output_try_from_ext_image_capture_source_v1()` (returns NULL
+   for a source that isn't output-backed) -- so a shield only ever
+   engages for a genuine whole-output session, matching the actual
+   threat model (accidentally recording/sharing the whole desktop with
+   something sensitive visible) without over-triggering on unrelated
+   single-window captures elsewhere on the same session.
+
+   **Deliberately not ported**: layer-shell (bar) `shield_when_capture`
+   (bar isn't `Client`-based, `wasp.rules` never matched it anyway),
+   `wlr_ext_image_capture_source_v1_cursor` (no wasp feature needs
+   cursor-only capture), replacing the legacy pair outright (see above).
+   `active_output_captures` is a single global counter, not per-output --
+   a known, accepted v1 simplification: capturing one output's whole
+   content also engages shields for flagged clients on a *different*
+   output, same "small first version" discipline as `wasp.animations`.
 
 ## Core (not patch-derived)
 - **Lua config, live-reloadable — done (2026-08-12), bound-key trigger**:

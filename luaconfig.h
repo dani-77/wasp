@@ -140,23 +140,28 @@ typedef struct {
 extern Scratchpad *scratchpads;
 extern size_t nscratchpads;
 
-/* wasp.rules = { { app_id=, title=, tags=, floating=, monitor=, center= },
- * ... } -- dwl's classic per-app-id/title placement rule table, moved
- * here (out of wasp.c/config.def.h, where it used to be a `static const
- * Rule rules[]` array) for the same reason Key/Arg live here: wasp.c's
- * applyrules() and luaconfig.c's load_rules() both need the exact same
- * struct layout. `app_id`/`title` are substring-matched against the
- * client's own (NULL = matches anything); `tags` is a 1..9 workspace
- * number (0 = don't force one, i.e. leave whatever the target monitor's
- * own active tagset already is); `monitor` is a 0-based output index (-1
- * = don't force one); a client matching more than one rule gets every
- * matched rule's `tags` OR'd together, but only the *last* match's
- * `isfloating`/`monitor`/`center` (same last-match-wins semantics
- * upstream dwl's applyrules() already had for those two fields).
- * `center` re-centers a floating client at its own requested size once
- * placed (wasp.c's centeredgeom() -- the same formula wasp.scratchpad
- * already uses to center a shown scratchpad); no effect on a tiled
- * client. */
+/* wasp.rules = { { app_id=, title=, tags=, floating=, monitor=, center=,
+ * shield_when_capture= }, ... } -- dwl's classic per-app-id/title
+ * placement rule table, moved here (out of wasp.c/config.def.h, where it
+ * used to be a `static const Rule rules[]` array) for the same reason
+ * Key/Arg live here: wasp.c's applyrules() and luaconfig.c's
+ * load_rules() both need the exact same struct layout. `app_id`/`title`
+ * are substring-matched against the client's own (NULL = matches
+ * anything); `tags` is a 1..9 workspace number (0 = don't force one,
+ * i.e. leave whatever the target monitor's own active tagset already
+ * is); `monitor` is a 0-based output index (-1 = don't force one); a
+ * client matching more than one rule gets every matched rule's `tags`
+ * OR'd together, but only the *last* match's
+ * `isfloating`/`monitor`/`center`/`shield_when_capture` (same
+ * last-match-wins semantics upstream dwl's applyrules() already had for
+ * `isfloating`/`monitor`). `center` re-centers a floating client at its
+ * own requested size once placed (wasp.c's centeredgeom() -- the same
+ * formula wasp.scratchpad already uses to center a shown scratchpad); no
+ * effect on a tiled client. `shield_when_capture` -- see NOTES.md item 9
+ * -- refuses this client's own per-window screen-capture requests
+ * outright, and swaps its content for a solid rect for the duration of
+ * any real whole-output capture session (screen recording/share),
+ * whether or not it's this specific client being captured. */
 typedef struct {
 	const char *id;
 	const char *title;
@@ -164,6 +169,7 @@ typedef struct {
 	int isfloating;
 	int monitor;
 	int center;
+	int shield_when_capture;
 } Rule;
 
 extern Rule *rules;

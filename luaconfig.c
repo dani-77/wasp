@@ -769,6 +769,11 @@ load_rules(lua_State *L, int wasptbl)
 			buf[count].center = lua_toboolean(L, -1);
 		lua_pop(L, 1);
 
+		lua_getfield(L, e, "shield_when_capture");
+		if (lua_isboolean(L, -1))
+			buf[count].shield_when_capture = lua_toboolean(L, -1);
+		lua_pop(L, 1);
+
 		count++;
 		lua_pop(L, 1); /* entry table */
 	}

@@ -181,9 +181,23 @@ wasp.scratchpad = {
 -- the app itself asked for -- often the top-left corner, since plenty of
 -- apps don't bother asking for anything better). A client matching more
 -- than one rule gets every match's `tags` combined, but only the *last*
--- match's `floating`/`monitor`/`center`. Applied once, when a window is
--- created -- editing `wasp.rules` and reloading affects the *next* window
--- that app opens, not ones already on screen.
+-- match's `floating`/`monitor`/`center`/`shield_when_capture`. Applied
+-- once, when a window is created -- editing `wasp.rules` and reloading
+-- affects the *next* window that app opens, not ones already on screen.
+--
+-- `shield_when_capture = true` -- refuses this window's own single-
+-- window screen-capture requests outright (share/screenshot dialogs
+-- that let you pick just one window), and swaps its content for a
+-- solid rect for the exact duration of any real whole-*output* capture
+-- (screen recording, screen share, a plain `grim` shot) -- it's the same
+-- on-screen content being swapped, so you see the blank too for as long
+-- as that capture is live (a visible cue it's protected, not a hidden
+-- swap only the recording sees); reverts to normal the instant capture
+-- ends, so it's never a permanent placeholder. Useful for a password
+-- manager, a terminal with secrets in scrollback, anything you don't
+-- want showing up in a recording by accident. Doesn't affect *other*
+-- windows' own capture -- someone sharing one specific different window
+-- doesn't shield this one too.
 --
 -- A given app's app_id isn't always as fixed as it looks -- some GTK/GLib
 -- apps report their prgname most of the time but fall back to their raw
@@ -198,6 +212,7 @@ wasp.rules = {
   -- { app_id = "org.gimp.GIMP", floating = true },
   -- { app_id = "firefox", tags = 9 },
   -- { app_id = "some-launcher", floating = true, center = true },
+  -- { app_id = "org.keepassxc.KeePassXC", shield_when_capture = true },
 }
 
 -- Keybindings ----------------------------------------------------------
