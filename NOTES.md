@@ -883,6 +883,21 @@ someone who isn't Daniel:
   comparing checksums: GitHub's authenticated tarball API and its
   public `archive/refs/tags/` codeload path package the same commit
   differently).
+- **`makedepends=` gaps Daniel caught, not something checked against
+  the actual build ahead of time**: `fcft-devel`/`pixman-devel`/
+  `tllist` (the bar's own dependencies, `wasp.c`'s `Makefile`
+  `PKGS` var literally lists `pixman-1 fcft`, `tllist` is a header-only
+  Void package with no `-devel` variant) were missing entirely --
+  copied dwl's own template's `makedepends` line, which has the exact
+  same gap (unclear whether dwl's real build has always relied on
+  something else pulling these in transitively, or its own template
+  is just as incomplete). Also added `wayland-protocols` to
+  `hostmakedepends` while double-checking -- confirmed via `xbps-query
+  -R -X wlroots0.20-devel` that nothing in the dependency chain pulls
+  it in transitively, and the `Makefile` genuinely needs its `.xml`
+  files (`$(WAYLAND_PROTOCOLS)`, `wayland-scanner`'s input) at build
+  time. Both template copies re-synced (`diff` confirms byte-identical
+  again) after the fix.
 
 ## Core (not patch-derived)
 - **Lua config, live-reloadable — done (2026-08-12), bound-key trigger**:

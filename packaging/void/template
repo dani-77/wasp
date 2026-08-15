@@ -3,10 +3,10 @@ pkgname=wasp
 version=0.9.0
 revision=1
 build_style=gnu-makefile
-hostmakedepends="pkg-config wayland-devel"
+hostmakedepends="pkg-config wayland-devel wayland-protocols"
 makedepends="libinput-devel wayland-devel wlroots0.20-devel
  libxkbcommon-devel libxcb-devel xcb-util-wm-devel lua54-devel
- scenefx-devel"
+ scenefx-devel fcft-devel pixman-devel tllist"
 depends="xorg-server-xwayland"
 conf_files="/etc/xdg-desktop-portal/wasp-portals.conf"
 short_desc="Lua-configurable Wayland compositor based on dwl/wlroots"
@@ -20,4 +20,5 @@ repository=d77
 
 do_install() {
 	make PREFIX=/usr DESTDIR=$DESTDIR install
+	vlicense LICENSE.wasp LICENSE
 }
