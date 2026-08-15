@@ -1,5 +1,5 @@
 [Desktop Entry]
-Name=wasp
+Name=Wasp
 Comment=dwl fork, Lua-configured
 Exec=wasp-session
 Type=Application
