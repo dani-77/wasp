@@ -1,37 +1,24 @@
 -- wasp — example config, and the default until you copy it:
 --   mkdir -p ~/.config/wasp && cp examples/config.lua ~/.config/wasp/config.lua
 --
--- Appearance, terminal/menu, keybindings, keyboard, gaps, monitors/output
--- scale, autostart, named scratchpads, window rules, rounded corners +
--- blur, and open/close/move/tag-switch animations are all wired up here
--- -- and your workspaces show up in any ext-workspace-v1-aware bar/shell
--- for free, no config needed for that part. See NOTES.md for what's
--- still coming.
+-- Workspaces show up in any ext-workspace-v1-aware bar/shell for free, no
+-- config needed for that part. See NOTES.md for what's still coming.
 
 wasp = {}
 
+-- Appearance ---------------------------------------------------------
 wasp.border = {
   width = 2,
-  focus = "#7aa2f7",  -- focused window border
-  normal = "#414868", -- unfocused window border
-  radius = 0, -- rounded corners, in pixels -- 0 (the default) is square,
-              -- same as upstream dwl; matches spitfire's own
-              -- spitfire.border.radius. Fullscreen windows always get
-              -- square corners regardless of this. See NOTES.md item 7.
+  focus = "#7aa2f7",
+  normal = "#414868",
+  radius = 0, -- fullscreen windows always get square corners regardless
 }
 
--- Rounded corners' blurrier sibling -- background/wallpaper blur (behind
--- everything) and per-window blur-behind (through a translucent window's
--- own transparency), both via scenefx. enable = false (the default)
--- reproduces today's exact rendering, no blur node ever created.
--- radius/passes/noise/brightness/contrast/saturation are scenefx's own
--- global look parameters (same names as wlr_scene_set_blur_data()'s
--- arguments) -- not per-window, one look for the whole session. Picked
--- up live on hot-reload for any blur node that already exists;
--- enable itself flipping on/off only affects windows mapped *after* the
--- reload (see NOTES.md item 7's own note on this). Global only for now
--- -- no wasp.rules override yet, same "one global on/off" scoping
--- wasp.animations started with too.
+-- Background/wallpaper blur and per-window blur-behind (scenefx). enable
+-- = false reproduces today's exact rendering, no blur node ever created.
+-- Global only — one look for the whole session, no per-window override.
+-- Picked up live on reload for a blur node that already exists; enable
+-- itself flipping on/off only affects windows mapped after the reload.
 wasp.blur = {
   enable = false,
   radius = 5,
@@ -42,30 +29,20 @@ wasp.blur = {
   saturation = 1.1,
 }
 
--- Gaps between/around tiled windows (tile/monocle/dwindle; floating is
--- untouched either way) — pixels. `inner` splits between two adjacent
--- windows, `outer` is the margin against the monitor's usable edges.
--- `smart`, if true, drops the outer gap when there's only one tiled window
--- on screen (same idea as spitfire's -- there it's implicit; here it's
--- opt-in since dwl's classic look has always kept edge gaps at 0).
+-- inner: between adjacent tiled windows. outer: margin against the
+-- monitor's usable edges. smart: drop the outer gap with one tiled window.
 wasp.gaps = {
   inner = 0,
   outer = 0,
   smart = false,
 }
 
--- MangoWC-style window animations -- open/close/move/tag-switch tweening
--- on top of the wlr_scene graph (see NOTES.md item 3). `enable = false`
--- (the default) reproduces the original instant behavior bit-for-bit --
--- nothing else below matters until it's true. Durations are milliseconds.
--- `type_open`/`type_close`: "fade" (opacity only), "zoom" (shrink/grow
--- around center by `zoom_ratio`, also fades), or "none". `tag_direction`
--- is which monitor edge tag-switches slide to/from (same edge both ways):
--- "left" | "right" | "top" | "bottom". The curve_* fields are CSS
+-- Open/close/move/tag-switch tweening on top of the wlr_scene graph.
+-- enable = false reproduces the original instant behavior bit-for-bit.
+-- type_open/type_close: "fade" | "zoom" | "none". tag_direction is which
+-- monitor edge tag-switches slide to/from. curve_* are CSS
 -- cubic-bezier()-style control points {x1, y1, x2, y2} (endpoints pinned
--- at (0,0)/(1,1)) -- see e.g. https://cubic-bezier.com to pick one; all
--- four default to the same gentle ease-out curve. Picked up live on
--- hot-reload (mod+shift+r), same as gaps -- no restart needed.
+-- at (0,0)/(1,1)) — see e.g. https://cubic-bezier.com to pick one.
 wasp.animations = {
   enable = false,
   duration_move = 200,
@@ -83,34 +60,26 @@ wasp.animations = {
   curve_tag   = { 0.25, 0.1, 0.25, 1.0 },
 }
 
--- Per-output rules -- mfact/nmaster/layout starting values, output scale,
--- rotation, and layout position. `name` matched as a substring against the
--- output's own name (as in `wlr-randr`/the log at startup); omit it (or
--- use "" / nil) for a fallback rule that matches whatever didn't match an
--- earlier, more specific one -- a monitor uses the *first* rule that
--- matches, not every one that does. `transform` is one of "normal" | "90"
--- | "180" | "270" | "flipped" | "flipped-90" | "flipped-180" |
--- "flipped-270". `x`/`y` are layout position in pixels; -1 lets wlroots
--- auto-place it (the common case, and the default if omitted).
+-- Inputs -------------------------------------------------------------
+-- Per-output rules: mfact/nmaster/layout starting values, scale, rotation,
+-- position. name matched as a substring against the output's own name
+-- (wlr-randr); omit for a fallback rule. A monitor uses the *first* rule
+-- that matches, not every one that does. transform: "normal" | "90" |
+-- "180" | "270" | "flipped" | "flipped-90" | "flipped-180" | "flipped-270".
+-- x/y: layout position in pixels, -1 = auto-place.
 --
--- `scale` here is applied right at startup -- set it to whatever you
--- actually want and wasp starts already scaled, no need to press
--- mod+shift+p every session to get back to where you left off (that's
--- for live adjustment/experimenting, not a substitute for just setting
--- the value you want here). It's also the one field that's live --
--- see the "setscale" action below and the reload note near the bottom
--- of this file for what reload() does and doesn't re-apply here.
+-- scale applies right at startup (set it here instead of pressing
+-- mod+shift+p every session) and is also the one field the "setscale"
+-- action and reload keep live.
 wasp.monitors = {
   -- { name = "eDP-1", scale = 1.25 }, -- example: a HiDPI laptop panel
   { mfact = 0.55, nmaster = 1, scale = 1, layout = "tile", x = -1, y = -1 },
 }
 
--- Keyboard layout (xkbcommon RMLVO fields) and repeat speed — same table
--- shape as spitfire.keyboard. Empty/omitted layout/variant/model/
--- options/rules mean "let xkbcommon pick its own default" (in practice
--- "us"). repeat_rate is repeats/second, repeat_delay is ms held before the
--- first repeat -- if typing ever feels like it drops in doubled letters,
--- raise repeat_delay rather than assuming a bug.
+-- xkbcommon RMLVO fields, same shape as spitfire.keyboard. Empty/omitted
+-- fields mean "let xkbcommon pick its own default" (in practice "us").
+-- repeat_rate: repeats/second. repeat_delay: ms held before the first
+-- repeat — raise it if typing ever feels like it drops in doubled letters.
 wasp.keyboard = {
   layout = "us",
   variant = "",
@@ -120,71 +89,46 @@ wasp.keyboard = {
   repeat_delay = 600,
 }
 
+-- Bar & background -----------------------------------------------------
 wasp.bar = {
   enable = true,
   top = true,
   layout = "tln|s", -- t=tags l=layout-symbol n=window-name s=status, | splits left/right
 }
-
 wasp.background = "#11111bff"
 
--- Agnostic launchers: whatever's actually installed. Any argv works, e.g.
--- {"alacritty", "-e", "tmux"} or {"foot"} if you switch terminals later.
+-- Terminal / menu ------------------------------------------------------
+-- Agnostic launchers: whatever's actually installed. Any argv works.
 wasp.terminal = { "alacritty" }
 wasp.menu = { "wmenu-run" }
 
 -- What "mod" means below. One of "alt" | "ctrl" | "super" | "shift".
 wasp.modkey = "alt"
 
--- Autostart -- one argv array per program, run once (fork+execvp, no
--- shell) right after startup, killed on exit. Uncomment/add whatever you
--- actually want running -- wasp has no opinion on wallpaper/idle/notifier
--- daemons etc., same as upstream dwl.
+-- Autostart --------------------------------------------------------------
+-- One argv array per program, run once (fork+execvp, no shell) at
+-- startup, killed on exit. wasp has no opinion on wallpaper/idle/notifier/
+-- polkit daemons, same as upstream dwl. Screen-sharing/screenshot via
+-- xdg-desktop-portal-wlr needs PipeWire running to transport frames.
 wasp.autostart = {
   -- { "swaybg", "-i", "/path/to/wallpaper.png" },
   -- { "mako" }, -- notifications
-  -- ScreenCast/Screenshot via xdg-desktop-portal-wlr (see wasp-session's
-  -- dbus-run-session wrapper and packaging/wasp-portals.conf) need
-  -- PipeWire actually running to transport frames -- confirmed
-  -- (2026-08-14) that nothing starts it otherwise, even when installed.
-  -- Just this one line on Void -- its pipewire package brings up its own
-  -- session manager (wireplumber shows up in `ps` on its own, no
-  -- separate autostart entry needed); other distros may package it
-  -- split out, worth checking `ps` after if this doesn't seem to work.
-  -- Skip "pipewire-pulse" unless you're moving audio to PipeWire too --
-  -- it'll otherwise fight a separately-running PulseAudio for the same
-  -- socket.
   -- { "pipewire" },
-  -- A polkit authentication agent -- without one, anything that asks for
-  -- privilege escalation via PolicyKit (NetworkManager's GUI, a package
-  -- manager front-end, mounting some removable drives, ...) just fails
-  -- silently instead of showing a password prompt, since Wayland has
-  -- nothing like X11's old suid-binary path for this. wasp doesn't ship
-  -- one itself (DE-agnostic, same stance as wallpaper/notifications
-  -- above) -- pick whichever your distro already has installed, e.g.
-  -- MATE's (what this file's own author actually runs, path may differ
-  -- by distro -- check `find /usr -iname '*polkit*agent*' 2>/dev/null`
-  -- if unsure), or swap for polkit-gnome/polkit-kde/lxqt-policykit/
-  -- xfce-polkit if you have one of those desktops' bits installed
-  -- instead:
+  -- A polkit agent — without one, anything asking for privilege
+  -- escalation (NetworkManager's GUI, mounting removable drives, ...)
+  -- just fails silently on Wayland. Pick whichever your DE already ships
+  -- (polkit-gnome/polkit-kde/lxqt-policykit/xfce-polkit/polkit-mate/...):
   -- { "/usr/libexec/polkit-mate-authentication-agent-1" },
 }
 
--- Named scratchpads -- a hidden, toggleable floating window per slot.
--- Toggling a slot with nothing running yet spawns `cmd`; toggling it again
--- (from anywhere) hides/shows the same window rather than killing and
--- respawning it. `app_id` is what wasp matches the freshly-spawned window
--- against to claim it as this slot's (defaults to `name` -- set it
--- explicitly if `cmd` doesn't already open with a matching --class/
--- --app-id). `w`/`h` are the fraction of the monitor's usable area it's
--- centered and sized to when shown (default 0.6 each). Bound via the
--- "toggle-scratchpad" action below, name = <slot's name>.
---
--- A scratchpad terminal needs its own app_id, distinct from an ordinary
--- one, so wasp can tell them apart -- terminal_with() below builds that
--- on top of wasp.terminal (whatever it's set to above) instead of
--- hardcoding a terminal here too. Assumes a --class-style flag
--- (alacritty/kitty/wezterm); foot uses -a instead -- swap if that's yours.
+-- Scratchpad -------------------------------------------------------------
+-- A hidden, toggleable floating window per slot. Toggling an empty slot
+-- spawns cmd; toggling again hides/shows that same window rather than
+-- killing and respawning it. app_id is what wasp matches the freshly-
+-- spawned window against (defaults to name — set explicitly if cmd
+-- doesn't open with a matching --class/--app-id). w/h: fraction of the
+-- monitor's usable area when shown (default 0.6 each). Bound via the
+-- "toggle-scratchpad" action below.
 local function terminal_with(...)
   local argv = {}
   for i, a in ipairs(wasp.terminal) do argv[i] = a end
@@ -197,47 +141,27 @@ wasp.scratchpad = {
   --   app_id = "scratch-term", w = 0.6, h = 0.6 },
 }
 
--- Window rules -- placement for specific apps, matched by app_id/title
--- (substring match against the client's own, either field omittable).
--- `tags` (1-9) sends it straight to a workspace; `floating` takes it out
--- of the tiling layout; `monitor` (0-based index) forces which output it
--- opens on; `center` re-centers a floating window at its own requested
--- size instead of wherever it happened to want to place itself (dwl, like
--- most dwm-family compositors, otherwise just honors whatever position
--- the app itself asked for -- often the top-left corner, since plenty of
--- apps don't bother asking for anything better). A client matching more
--- than one rule gets every match's `tags` combined, but only the *last*
--- match's `floating`/`monitor`/`center`/`shield_when_capture`. Applied
--- once, when a window is created -- editing `wasp.rules` and reloading
--- affects the *next* window that app opens, not ones already on screen.
+-- Window rules -----------------------------------------------------------
+-- Matched by app_id/title (substring against the client's own, either
+-- field omittable). tags (1-9) sends it to a workspace; floating takes it
+-- out of tiling; monitor (0-based) forces which output it opens on;
+-- center re-centers a floating window at its own requested size. A client
+-- matching more than one rule gets every match's tags combined, but only
+-- the *last* match's floating/monitor/center/shield_when_capture. Applied
+-- once, at creation — reloading affects the next window that app opens,
+-- not ones already on screen.
 --
--- `shield_when_capture = true` -- refuses this window's own single-
--- window screen-capture requests outright (share/screenshot dialogs
--- that let you pick just one window), and swaps its content for a
--- solid rect for the exact duration of any real whole-*output* capture
--- (screen recording, screen share, a plain `grim` shot) -- it's the same
--- on-screen content being swapped, so you see the blank too for as long
--- as that capture is live (a visible cue it's protected, not a hidden
--- swap only the recording sees); reverts to normal the instant capture
--- ends, so it's never a permanent placeholder. Useful for a password
--- manager, a terminal with secrets in scrollback, anything you don't
--- want showing up in a recording by accident. Doesn't affect *other*
--- windows' own capture -- someone sharing one specific different window
--- doesn't shield this one too. To capture a single window from the
--- command line (`grim -T <identifier>`), see `wasp-list-windows` (built
--- and installed alongside `wasp` itself) -- it lists every open
--- window's app_id/title/identifier, since that identifier isn't
--- otherwise discoverable: `grim -T "$(wasp-list-windows -a firefox)"`.
+-- shield_when_capture = true refuses this window's own single-window
+-- capture requests outright, and swaps its content for a solid rect for
+-- the duration of any whole-output capture (recording/share/grim) — you
+-- see the blank too the whole time, a visible cue rather than a hidden
+-- swap. Doesn't affect other windows' own capture. To capture a single
+-- window from the CLI (grim -T <id>), see wasp-list-windows.
 --
--- A given app's app_id isn't always as fixed as it looks -- some GTK/GLib
--- apps report their prgname most of the time but fall back to their raw
--- (usually reverse-DNS) GApplication id instead if D-Bus single-instance
--- registration fails for that particular run (e.g. no
--- DBUS_SESSION_BUS_ADDRESS). If a rule that used to work suddenly stops
--- matching, that's worth checking (WAYLAND_DEBUG=1 <app> 2>&1 | grep
--- set_app_id) before assuming wasp broke -- and it's fine to list the
--- same app twice, once per app_id it's been seen using, with identical
--- fields.
+-- Some GTK/GLib apps' app_id isn't fixed — they can fall back to their raw
+-- GApplication id if D-Bus single-instance registration fails (e.g. no
+-- DBUS_SESSION_BUS_ADDRESS). If a rule stops matching, check with
+-- WAYLAND_DEBUG=1 <app> 2>&1 | grep set_app_id before assuming wasp broke.
 wasp.rules = {
   -- { app_id = "org.gimp.GIMP", floating = true },
   -- { app_id = "firefox", tags = 9 },
@@ -249,38 +173,32 @@ wasp.rules = {
 -- Each entry: { mods = {...}, key = "<xkb keysym name>", action = "...",
 --               <action-specific fields> }
 --
--- `key` accepts anything libxkbcommon knows the name of: letters/digits
--- ("j", "1"), symbols ("comma", "exclam"), named keys ("Return", "Tab",
--- "space"), function/media keys ("F1", "XF86AudioRaiseVolume"), arrows
--- ("Left"/"Right"/"Up"/"Down"), and so on.
+-- key accepts anything libxkbcommon knows the name of: letters/digits
+-- ("j", "1"), symbols ("comma", "exclam"), named keys ("Return", "space"),
+-- function/media keys ("F1", "XF86AudioRaiseVolume"), arrows, etc.
 --
 -- Actions and their fields:
 --   spawn            cmd = {argv...}       run an arbitrary command
 --   spawn-terminal    (none)               run wasp.terminal
 --   spawn-menu        (none)               run wasp.menu
 --   focusstack        dir = 1 | -1          next/prev window in stack
---   movestack         dir = 1 | -1          swap the focused window's own position with the next/prev one
---   zoom              (none)                swap the focused window into/out of the master area
---   incnmaster        dir = 1 | -1          grow/shrink the master area's window count
---   setmfact          delta = <float>       grow/shrink the master area's size (+/-)
+--   movestack         dir = 1 | -1          swap focused window with next/prev
+--   zoom              (none)                swap focused window into/out of master
+--   incnmaster        dir = 1 | -1          grow/shrink master area's window count
+--   setmfact          delta = <float>       grow/shrink master area's size
 --   view              tag = 1..9 | "all" (omit = toggle back)   switch workspace
---   viewshift         dir = 1 | -1          switch to next/previous workspace (wraps)
+--   viewshift         dir = 1 | -1          next/previous workspace (wraps)
 --   toggleview        tag = 1..9                                 also show workspace
---   tag               tag = 1..9 | "all" (omit = toggle back)   move focused window to workspace
---   toggletag         tag = 1..9                                 also tag focused window with workspace
---   focusmon          dir = "left" | "right"            focus other monitor
---   tagmon            dir = "left" | "right"            move focused window to other monitor
---   setlayout         layout = "tile"|"floating"|"monocle"|"dwindle" (omit to cycle)
---   setscale          delta = <float>       grow/shrink the focused monitor's output scale (+/-)
---   togglefloating    (none)
---   togglefullscreen  (none)
---   togglebar         (none)
---   killclient        (none)
---   quit              (none)
---   chvt              vt = <number>         switch to a different virtual terminal
---   moveresizekb      dx = dy = dw = dh = <pixels>   nudge/resize the focused floating window
---   reload            (none)                re-read config.lua live -- see the note above wasp.autostart below for what this does/doesn't cover
---   toggle-scratchpad name = "<slot name>"   spawn/show/hide a wasp.scratchpad slot -- see above
+--   tag               tag = 1..9 | "all" (omit = toggle back)   move focused window
+--   toggletag         tag = 1..9                                 also tag focused window
+--   focusmon/tagmon    dir = "left" | "right"           focus / move window to other monitor
+--   setlayout         layout = "tile"|"floating"|"monocle"|"dwindle" (omit = cycle)
+--   setscale          delta = <float>       grow/shrink focused monitor's scale, clamped 0.25-4.0
+--   togglefloating / togglefullscreen / togglebar / killclient / quit  (none)
+--   chvt              vt = <number>         switch virtual terminal
+--   moveresizekb      dx = dy = dw = dh = <pixels>   nudge/resize focused floating window
+--   reload            (none)                re-read config.lua live
+--   toggle-scratchpad name = "<slot name>"   spawn/show/hide a wasp.scratchpad slot
 wasp.keys = {}
 local keys = wasp.keys
 
@@ -293,30 +211,19 @@ end
 -- Launchers
 bind({ "mod", "shift" }, "Return", "spawn-terminal")
 bind({ "mod" },          "p",      "spawn-menu")
--- A second launcher, if you use one alongside wasp.menu -- "d77run" here
--- is just what this machine has (see ~/Projectos/d77run); swap the cmd
--- for whatever you actually run. A different modifier than "mod" (here
--- "super", i.e. the Logo/Windows key) so it doesn't compete with any
--- mod+<key> binding you'd rather keep where it already is -- any mod name
--- works standalone like this, not just as part of "mod".
+-- A second launcher on a different modifier so it doesn't compete with mod+<key>:
 -- bind({ "super" }, "r", "spawn", { cmd = { "d77run" } })
 
--- Media keys — dedicated hardware keys, so no modifier needed (they can't
--- collide with anything text-related; `mods = {}` means "bare key").
--- Via ALSA (amixer); swap "Master" for whatever `amixer scontrols` lists
--- on your system if it differs, or for
--- "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+-/mute-toggle" (PipeWire) /
--- "pactl set-sink-volume/set-sink-mute @DEFAULT_SINK@ ..." (PulseAudio via
--- pactl) if ALSA isn't what your system actually mixes through.
+-- Media keys (bare, no modifier — dedicated hardware keys). Via ALSA
+-- (amixer); swap for wpctl (PipeWire) or pactl (PulseAudio) if that's not
+-- what your system mixes through.
 bind({}, "XF86AudioRaiseVolume", "spawn", { cmd = { "amixer", "-q", "set", "Master", "5%+" } })
 bind({}, "XF86AudioLowerVolume", "spawn", { cmd = { "amixer", "-q", "set", "Master", "5%-" } })
 bind({}, "XF86AudioMute",        "spawn", { cmd = { "amixer", "-q", "set", "Master", "toggle" } })
 
--- Screenshot (grim, wlr-screencopy-based) -- Print Screen, whole output(s),
--- saved to ~/screenshot-<timestamp>.png. Wrapped in "sh -c" because spawn()
--- execvp()s directly (no shell), so "~" and "$(date ...)" need something to
--- expand them. Region-select instead of full-screen needs `slurp` too (not
--- installed on this machine) -- swap the cmd for:
+-- Screenshot (grim) — whole output, saved to ~/screenshot-<timestamp>.png.
+-- Wrapped in sh -c since spawn() execvp()s directly (no shell expansion).
+-- Region-select needs slurp too:
 -- { "sh", "-c", 'grim -g "$(slurp)" ~/screenshot-$(date +%Y%m%d-%H%M%S).png' }
 bind({}, "Print", "spawn", { cmd = { "sh", "-c", "grim ~/screenshot-$(date +%Y%m%d-%H%M%S).png" } })
 
@@ -324,13 +231,11 @@ bind({}, "Print", "spawn", { cmd = { "sh", "-c", "grim ~/screenshot-$(date +%Y%m
 bind({ "mod" }, "j",    "focusstack", { dir = 1 })
 bind({ "mod" }, "k",    "focusstack", { dir = -1 })
 bind({ "mod" }, "Tab",  "view") -- go back to the previously selected tags
-bind({ "mod" }, "Return", "zoom")  -- swap focused window into/out of master
--- Swap the focused window's own position in the stack (not just where
--- focus goes, like focusstack above) with the next/previous one.
+bind({ "mod" }, "Return", "zoom")
 bind({ "mod", "shift" }, "j", "movestack", { dir = 1 })
 bind({ "mod", "shift" }, "k", "movestack", { dir = -1 })
 
--- Scratchpad -- pairs with the wasp.scratchpad slot above; uncomment both
+-- Scratchpad — pairs with the wasp.scratchpad slot above; uncomment both
 -- together. Backtick/grave is the common drop-down-terminal convention.
 -- bind({ "mod" }, "grave", "toggle-scratchpad", { name = "term" })
 
@@ -364,10 +269,8 @@ bind({ "mod" },          "period", "focusmon", { dir = "right" })
 bind({ "mod", "shift" }, "less",    "tagmon",   { dir = "left" })
 bind({ "mod", "shift" }, "greater", "tagmon",   { dir = "right" })
 
--- Live output-scale inc/dec on the focused monitor -- same Mod+Shift+P/M
--- as spitfire, so muscle memory carries over between the two. `delta` is
--- relative (added to the current scale, not an absolute value); clamped
--- to a sane 0.25-4.0 range in wasp.c.
+-- Live output-scale inc/dec — same Mod+Shift+P/M as spitfire, so muscle
+-- memory carries over between the two.
 bind({ "mod", "shift" }, "p", "setscale", { delta = 0.25 })
 bind({ "mod", "shift" }, "m", "setscale", { delta = -0.25 })
 
@@ -388,21 +291,14 @@ bind({ "mod", "shift" }, "parenright",  "tag",  { tag = "all" })
 bind({ "mod", "shift" }, "c", "killclient")
 bind({ "mod", "shift" }, "q", "quit")
 
--- Hot-reload -- re-reads this file and re-applies gaps, wasp.animations
--- (including re-baking the curve_* easing tables), wasp.blur's look
--- parameters (radius/passes/noise/...) for any blur node that already
--- exists, the bar's visibility/position/colors, every window's border
--- color, the background, keyboard layout/repeat speed, wasp.monitors'
--- `scale` (only that one field -- mfact/nmaster/layout/transform/x/y
--- stay startup-time only, same as they always were), and keybindings
--- themselves, all live, no restart. Border *width*/`radius` on already-
--- open windows (picked up by that window's own next real geometry
--- change, not forced immediately), wasp.blur.enable flipping on/off
--- (only affects windows/outputs from that point on, not retroactively),
--- and wasp.autostart are what still need a restart -- or just a bit of
--- patience for the first two -- to fully take effect everywhere
--- (autostart deliberately only ever runs once, at real startup -- see
--- NOTES.md; otherwise every reload would relaunch everything in it).
+-- Hot-reload — re-reads this file and re-applies gaps, animations
+-- (re-baking curve_* easing tables), blur's look params on any blur node
+-- that already exists, the bar, every window's border color, background,
+-- keyboard layout/repeat speed, monitors' scale (only that field —
+-- mfact/nmaster/layout/transform/x/y stay startup-time only), and
+-- keybindings, all live. Border width/radius on already-open windows,
+-- blur.enable flipping on/off, and autostart still need a restart (or a
+-- window's next real geometry change, for border width/radius).
 bind({ "mod", "shift" }, "r", "reload")
 
 -- VT switching (Ctrl-Alt-Fx) and Ctrl-Alt-Backspace, same as upstream dwl
@@ -411,31 +307,22 @@ for vt = 1, 12 do
 end
 bind({ "ctrl", "alt" }, "Terminate_Server", "quit")
 
--- Touchpad gestures --------------------------------------------------
+-- Touchpad gestures ------------------------------------------------------
 -- { fingers = <count, omit/0 = any>, direction = "left"|"right"|"up"|"down",
---   action = "...", <action-specific fields> } -- same action table as
--- wasp.keys above (spawn/view/tag/focusmon/... all work here too, with the
--- same fields). `direction` is classified from the swipe's dominant axis
--- once it ends, so a mostly-horizontal swipe always resolves to left/right
--- even if it wasn't perfectly straight. Only swipe gestures exist right now
--- (no pinch/hold) -- see NOTES.md item 8.
+--   action = "...", <action-specific fields> } — same action table as
+-- wasp.keys above. direction is classified from the swipe's dominant axis
+-- once it ends. Swipe only for now (no pinch/hold) — see NOTES.md item 8.
 wasp.gestures = {
-  -- 3-finger swipe left/right cycles focus between windows (same as
-  -- Mod+j/k) -- visible via the border color changing even with just one
-  -- monitor and two or more windows open. Uncomment and adjust finger
-  -- counts to taste.
+  -- 3-finger left/right cycles focus between windows (same as Mod+j/k).
   -- { fingers = 3, direction = "left",  action = "focusstack", dir = -1 },
   -- { fingers = 3, direction = "right", action = "focusstack", dir = 1 },
   -- 4-finger up/down for fullscreen toggle.
   -- { fingers = 4, direction = "up",    action = "togglefullscreen" },
-  -- 4-finger left/right -- next/previous workspace, wrapping (9 -> 1,
-  -- 1 -> 9). See "viewshift" in the action table above for what "next"
-  -- means here, since tags are a bitmask, not an ordered list.
+  -- 4-finger left/right — next/previous workspace, wrapping (9 -> 1, 1 -> 9).
   -- { fingers = 4, direction = "left",  action = "viewshift", dir = -1 },
   -- { fingers = 4, direction = "right", action = "viewshift", dir = 1 },
-  -- Alternative to the 3-finger set above, if you'd rather 3-finger
-  -- left/right move focus *between monitors* instead of within one (only
-  -- useful with 2+ monitors -- pick one or the other, not both, since
+  -- Alternative to the 3-finger set above: focus between monitors instead
+  -- (useful with 2+ monitors — pick one or the other, not both, since
   -- they'd otherwise fight over the same fingers/direction combo):
   -- { fingers = 3, direction = "left",  action = "focusmon", dir = "left" },
   -- { fingers = 3, direction = "right", action = "focusmon", dir = "right" },
