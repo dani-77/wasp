@@ -2877,6 +2877,10 @@ destroynotify(struct wl_listener *listener, void *data)
 		wl_list_remove(&c->map.link);
 		wl_list_remove(&c->unmap.link);
 		wl_list_remove(&c->maximize.link);
+		if (c->decoration) {
+			wl_list_remove(&c->set_decoration_mode.link);
+			wl_list_remove(&c->destroy_decoration.link);
+		}
 	}
 	free(c);
 }
