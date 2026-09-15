@@ -163,6 +163,7 @@ client_get_geometry(Client *c, struct wlr_box *geom)
 	}
 #endif
 	*geom = c->surface.xdg->geometry;
+	geom->x = geom->y = 0;
 }
 
 static inline Client *
