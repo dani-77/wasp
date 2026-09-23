@@ -118,6 +118,7 @@ clock() {
 trap 'exit 0' TERM INT PIPE
 
 while :; do
+	if ! pgrep -x wasp >/dev/null 2>&1; then exit 0; fi
 	printf '%s\n' "$(cpu) | $(ram) | $(volume) | $(network) | $(battery) | $(clock)" || exit 0
 	sleep 5 &
 	wait $! 2>/dev/null

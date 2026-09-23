@@ -2242,6 +2242,10 @@ cleanuplisteners(void)
 	wl_list_remove(&request_start_drag.link);
 	wl_list_remove(&start_drag.link);
 	wl_list_remove(&new_session_lock.link);
+	if (ext_toplevel_capture_mgr)
+		wl_list_remove(&new_toplevel_capture_request.link);
+	if (ext_image_copy_capture_mgr)
+		wl_list_remove(&image_copy_capture_new_session.link);
 #ifdef XWAYLAND
 	wl_list_remove(&new_xwayland_surface.link);
 	wl_list_remove(&xwayland_ready.link);
