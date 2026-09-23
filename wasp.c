@@ -4753,7 +4753,7 @@ spawn(const Arg *arg)
 		dup2(STDERR_FILENO, STDOUT_FILENO);
 		setsid();
 		execvp(argv[0], argv);
-		die("dwl: execvp %s failed:", argv[0]);
+		die("wasp: execvp %s failed:", argv[0]);
 	}
 }
 
@@ -5306,7 +5306,7 @@ updatemons(struct wl_listener *listener, void *data)
 	}
 
 	if (stext[0] == '\0')
-		strncpy(stext, "dwl-"VERSION, sizeof(stext));
+		strncpy(stext, "wasp-"VERSION, sizeof(stext));
 	wl_list_for_each(m, &mons, link) {
 		updatebar(m);
 		drawbar(m);
@@ -5648,7 +5648,7 @@ main(int argc, char *argv[])
 		else if (c == 'd')
 			log_level = WLR_DEBUG;
 		else if (c == 'v')
-			die("dwl " VERSION);
+			die("wasp " VERSION);
 		else
 			goto usage;
 	}
