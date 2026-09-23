@@ -15,7 +15,7 @@ license="GPL-3.0-or-later, MIT"
 homepage="https://github.com/dani-77/wasp"
 changelog="https://github.com/dani-77/wasp/releases/tag/v${version}"
 distfiles="https://github.com/dani-77/wasp/archive/refs/tags/v${version}.tar.gz"
-checksum=0000000000000000000000000000000000000000000000000000000000000000
+checksum=6d12700903a4d59a494984882126c7bda15ede8788a071c0f98d050a2e10d762
 repository=d77
 
 do_install() {
