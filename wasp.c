@@ -1910,6 +1910,13 @@ autostartexec(void)
 
 	for (i = 0; i < nautostart; i++) {
 		if ((autostart_pids[i] = fork()) == 0) {
+			/* Don't inherit wasp's stdin: it's the read end of the
+			 * statusbar pipe (see scripts/wasp-session), and a
+			 * child holding it open keeps the pipe from breaking
+			 * when wasp dies, so the statusbar never exits. Same
+			 * as spawn(). */
+			close(STDIN_FILENO);
+			open("/dev/null", O_RDWR);
 			setsid();
 			execvp(autostart[i][0], (char *const *)autostart[i]);
 			die("wasp: autostart execvp %s:", autostart[i][0]);
