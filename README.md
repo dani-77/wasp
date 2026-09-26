@@ -42,9 +42,16 @@ dwindle, floating) underneath, built on [wlroots] and [SceneFX], with
 
 ## Install
 
+**Arch Linux**: in the AUR as
+[`wasp-d77`](https://aur.archlinux.org/packages/wasp-d77)
+(`yay -S wasp-d77`; the plain `wasp` AUR name is an unrelated MQTT
+broker). The same `PKGBUILD` is in
+[`packaging/arch`](packaging/arch/PKGBUILD).
+
 **Void Linux**: a package template is included
-([`packaging/void/template`](packaging/void/template)) for building
-with `xbps-src`.
+([`packaging/void/template`](packaging/void/template), a copy of the
+one in [`d77void/srcpkgs-d77`](https://github.com/d77void/srcpkgs-d77))
+for building with `xbps-src`.
 
 Other distros: build from source — see
 [`doc/DEVELOPMENT.md`](doc/DEVELOPMENT.md) for dependencies and build
