@@ -334,6 +334,7 @@ struct Monitor {
 	struct wl_listener frame;
 	struct wl_listener destroy;
 	struct wl_listener request_state;
+	struct wl_listener commit_lock_surface;
 	struct wl_listener destroy_lock_surface;
 	struct wlr_session_lock_surface_v1 *lock_surface;
 	struct wlr_box m; /* monitor area, layout-relative */
@@ -469,6 +470,7 @@ static void cleanupmon(struct wl_listener *listener, void *data);
 static void cleanuplisteners(void);
 static void closemon(Monitor *m);
 static void commitlayersurfacenotify(struct wl_listener *listener, void *data);
+static void commitlocksurface(struct wl_listener *listener, void *data);
 static void commitnotify(struct wl_listener *listener, void *data);
 static void commitpopup(struct wl_listener *listener, void *data);
 static void createdecoration(struct wl_listener *listener, void *data);
@@ -2326,6 +2328,20 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 }
 
 void
+commitlocksurface(struct wl_listener *listener, void *data)
+{
+	Monitor *m = wl_container_of(listener, m, commit_lock_surface);
+
+	if (!m->lock_surface->surface->mapped)
+		return;
+
+	wl_list_remove(&m->commit_lock_surface.link);
+	wl_list_init(&m->commit_lock_surface.link);
+
+	motionnotify(0, NULL, 0, 0, 0, 0);
+}
+
+void
 commitnotify(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, commit);
@@ -2503,6 +2519,7 @@ createlocksurface(struct wl_listener *listener, void *data)
 	wlr_session_lock_surface_v1_configure(lock_surface, m->m.width, m->m.height);
 
 	LISTEN(&lock_surface->events.destroy, &m->destroy_lock_surface, destroylocksurface);
+	LISTEN(&lock_surface->surface->events.commit, &m->commit_lock_surface, commitlocksurface);
 
 	if (m == selmon)
 		client_notify_enter(lock_surface->surface, wlr_seat_get_keyboard(seat));
@@ -2843,6 +2860,7 @@ destroylocksurface(struct wl_listener *listener, void *data)
 
 	m->lock_surface = NULL;
 	wl_list_remove(&m->destroy_lock_surface.link);
+	wl_list_remove(&m->commit_lock_surface.link);
 
 	if (lock_surface->surface != seat->keyboard_state.focused_surface)
 		return;
@@ -3483,6 +3501,12 @@ locksession(struct wl_listener *listener, void *data)
 	lock->scene = wlr_scene_tree_create(layers[LyrBlock]);
 	cur_lock = lock->lock = session_lock;
 	locked = 1;
+
+	/* Cancel any interactive move/resize and take the pointer focus away
+	 * from the clients below the lock screen */
+	cursor_mode = CurNormal;
+	grabc = NULL;
+	motionnotify(0, NULL, 0, 0, 0, 0);
 
 	LISTEN(&session_lock->events.new_surface, &lock->new_surface, createlocksurface);
 	LISTEN(&session_lock->events.destroy, &lock->destroy, destroysessionlock);
@@ -5481,7 +5505,7 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 	LayerSurface *l = NULL;
 	int layer;
 
-	for (layer = NUM_LAYERS - 1; !surface && layer >= 0; layer--) {
+	for (layer = NUM_LAYERS - 1; !surface && layer >= (locked ? LyrBlock : 0); layer--) {
 		if (!(node = wlr_scene_node_at(&layers[layer]->node, x, y, nx, ny)))
 			continue;
 
