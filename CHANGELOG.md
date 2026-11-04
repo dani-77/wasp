@@ -4,21 +4,25 @@ wasp is a fork of [dwl](https://codeberg.org/dwl/dwl), branched from its
 `main` on 2026-02-25 (after dwl 0.8). Entries from dwl are tagged with
 the upstream commit they come from.
 
-* [Unreleased](#unreleased)
+* [0.10.1](#0101)
 * [0.10.0](#0100)
 * [0.9.1](#091)
 * [0.9.0](#090)
 * [dwl history](#dwl-history)
 
 
-## Unreleased
+## 0.10.1
 
 ### Added
 
-- SIGHUP reloads config.lua, same as the `reload` action, so scripts and
+* SIGHUP reloads config.lua, same as the `reload` action, so scripts and
   settings tools (Kantele) can apply changes: `pkill -HUP -x wasp`.
-- `none` action: does nothing and lets the key through to the focused
+* `none` action: does nothing and lets the key through to the focused
   window. Bind it earlier in `wasp.keys` to switch off a later binding.
+* `wasp-session` writes the session's output to
+  `$XDG_STATE_HOME/wasp/wasp.log` (the previous session's log is kept as
+  `wasp.log.old`) and enables core dumps, so a crash can be looked into
+  after logging back in.
 
 
 ## 0.10.0
