@@ -66,8 +66,8 @@ cp examples/config.lua ~/.config/wasp/config.lua
 
 [`examples/config.lua`](examples/config.lua) is both the default and the
 full reference — every option, commented, ready to uncomment and tweak.
-Edit it, reload (`mod+shift+r` by default), and most changes apply
-immediately.
+Edit it, reload (`mod+shift+r` by default, or `pkill -HUP -x wasp` from
+a script), and most changes apply immediately.
 
 ## Docs
 

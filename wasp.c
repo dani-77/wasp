@@ -545,6 +545,7 @@ static void pointerfocus(Client *c, LayerSurface *l, struct wlr_surface *surface
 static void powermgrsetmode(struct wl_listener *listener, void *data);
 static void quit(const Arg *arg);
 static void reload(const Arg *arg);
+static void noaction(const Arg *arg);
 static void rendermon(struct wl_listener *listener, void *data);
 static void requestdecorationmode(struct wl_listener *listener, void *data);
 static void requeststartdrag(struct wl_listener *listener, void *data);
@@ -804,6 +805,7 @@ static const struct { const char *name; ActionFn fn; } actiontable[] = {
 	{ "chvt",             chvt },
 	{ "moveresizekb",     moveresizekb },
 	{ "reload",           reload },
+	{ "none",             noaction },
 };
 
 ActionFn
@@ -3529,7 +3531,10 @@ keybinding(uint32_t mods, xkb_keysym_t sym)
 		if (CLEANMASK(mods) == CLEANMASK(k->mod)
 				&& xkb_keysym_to_lower(sym) == xkb_keysym_to_lower(k->keysym)
 				&& k->func) {
-			return k;
+			/* "none" switches off a binding further down the list (a
+			 * Kantele override, say): stop looking and let the key
+			 * through to the focused client. */
+			return k->func == noaction ? NULL : k;
 		}
 	}
 	return NULL;
@@ -4265,6 +4270,11 @@ void
 quit(const Arg *arg)
 {
 	wl_display_terminate(dpy);
+}
+
+void
+noaction(const Arg *arg)
+{
 }
 
 void

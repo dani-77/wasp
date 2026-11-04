@@ -207,6 +207,9 @@ wasp.rules = {
 --   chvt              vt = <number>         switch virtual terminal
 --   moveresizekb      dx = dy = dw = dh = <pixels>   nudge/resize focused floating window
 --   reload            (none)                re-read config.lua live
+--   none              (none)                do nothing and pass the key to the
+--                                           focused window; switches off a
+--                                           binding further down the list
 --   toggle-scratchpad name = "<slot name>"   spawn/show/hide a wasp.scratchpad slot
 wasp.keys = {}
 local keys = wasp.keys
