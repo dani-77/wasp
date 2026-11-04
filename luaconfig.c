@@ -993,9 +993,13 @@ build_key_arg(lua_State *L, int e, const char *action)
 		}
 		lua_pop(L, 1);
 	} else if (!strcmp(action, "focusmon") || !strcmp(action, "tagmon")) {
+		const char *dir;
 		lua_getfield(L, e, "dir");
-		arg.i = (lua_isstring(L, -1) && !strcmp(lua_tostring(L, -1), "right"))
-			? WLR_DIRECTION_RIGHT : WLR_DIRECTION_LEFT;
+		dir = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
+		arg.i = !strcmp(dir, "right") ? WLR_DIRECTION_RIGHT
+			: !strcmp(dir, "up") ? WLR_DIRECTION_UP
+			: !strcmp(dir, "down") ? WLR_DIRECTION_DOWN
+			: WLR_DIRECTION_LEFT;
 		lua_pop(L, 1);
 	} else if (!strcmp(action, "setlayout")) {
 		lua_getfield(L, e, "layout");

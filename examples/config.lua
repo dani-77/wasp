@@ -196,7 +196,7 @@ wasp.rules = {
 --   toggleview        tag = 1..9                                 also show workspace
 --   tag               tag = 1..9 | "all" (omit = toggle back)   move focused window
 --   toggletag         tag = 1..9                                 also tag focused window
---   focusmon/tagmon    dir = "left" | "right"           focus / move window to other monitor
+--   focusmon/tagmon   dir = "left"|"right"|"up"|"down"           focus / move window to other monitor
 --   setlayout         layout = "tile"|"floating"|"monocle"|"dwindle" (omit = cycle)
 --   setscale          delta = <float>       grow/shrink focused monitor's scale, clamped 0.25-4.0
 --   togglefloating / togglefullscreen / togglebar / killclient / quit  (none)
