@@ -243,6 +243,7 @@ typedef struct {
 	struct wl_listener associate;
 	struct wl_listener dissociate;
 	struct wl_listener configure;
+	struct wl_listener set_geometry;
 	struct wl_listener set_hints;
 #endif
 	unsigned int bw;
@@ -742,6 +743,7 @@ static void associatex11(struct wl_listener *listener, void *data);
 static void configurex11(struct wl_listener *listener, void *data);
 static void createnotifyx11(struct wl_listener *listener, void *data);
 static void dissociatex11(struct wl_listener *listener, void *data);
+static void setgeometryx11(struct wl_listener *listener, void *data);
 static void sethints(struct wl_listener *listener, void *data);
 static void xwaylandready(struct wl_listener *listener, void *data);
 static struct wl_listener new_xwayland_surface = {.notify = createnotifyx11};
@@ -2918,6 +2920,7 @@ destroynotify(struct wl_listener *listener, void *data)
 		wl_list_remove(&c->associate.link);
 		wl_list_remove(&c->configure.link);
 		wl_list_remove(&c->dissociate.link);
+		wl_list_remove(&c->set_geometry.link);
 		wl_list_remove(&c->set_hints.link);
 	} else
 #endif
@@ -3605,7 +3608,6 @@ mapnotify(struct wl_listener *listener, void *data)
 		/* Unmanaged clients always are floating */
 		wlr_scene_node_reparent(&c->scene->node, layers[LyrUnmanaged]);
 		wlr_scene_node_set_position(&c->scene->node, c->geom.x, c->geom.y);
-		client_set_size(c, c->geom.width, c->geom.height);
 		if (client_wants_focus(c)) {
 			focusclient(c, 1);
 			exclusive_focus = c;
@@ -5635,13 +5637,8 @@ configurex11(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, configure);
 	struct wlr_xwayland_surface_configure_event *event = data;
-	if (!client_surface(c) || !client_surface(c)->mapped) {
-		wlr_xwayland_surface_configure(c->surface.xwayland,
-				event->x, event->y, event->width, event->height);
-		return;
-	}
-	if (client_is_unmanaged(c)) {
-		wlr_scene_node_set_position(&c->scene->node, event->x, event->y);
+	if (!client_surface(c) || !client_surface(c)->mapped
+			|| client_is_unmanaged(c)) {
 		wlr_xwayland_surface_configure(c->surface.xwayland,
 				event->x, event->y, event->width, event->height);
 		return;
@@ -5674,6 +5671,7 @@ createnotifyx11(struct wl_listener *listener, void *data)
 	LISTEN(&xsurface->events.request_activate, &c->activate, activatex11);
 	LISTEN(&xsurface->events.request_configure, &c->configure, configurex11);
 	LISTEN(&xsurface->events.request_fullscreen, &c->fullscreen, fullscreennotify);
+	LISTEN(&xsurface->events.set_geometry, &c->set_geometry, setgeometryx11);
 	LISTEN(&xsurface->events.set_hints, &c->set_hints, sethints);
 	LISTEN(&xsurface->events.set_title, &c->set_title, updatetitle);
 }
@@ -5684,6 +5682,19 @@ dissociatex11(struct wl_listener *listener, void *data)
 	Client *c = wl_container_of(listener, c, dissociate);
 	wl_list_remove(&c->map.link);
 	wl_list_remove(&c->unmap.link);
+}
+
+void
+setgeometryx11(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, set_geometry);
+
+	if (!client_is_unmanaged(c) || !client_surface(c)
+			|| !client_surface(c)->mapped)
+		return;
+
+	client_get_geometry(c, &c->geom);
+	wlr_scene_node_set_position(&c->scene->node, c->geom.x, c->geom.y);
 }
 
 void
