@@ -292,11 +292,18 @@ client_is_unmanaged(Client *c)
 static inline void
 client_notify_enter(struct wlr_surface *s, struct wlr_keyboard *kb)
 {
-	if (kb)
-		wlr_seat_keyboard_notify_enter(seat, s, kb->keycodes,
-				kb->num_keycodes, &kb->modifiers);
-	else
+	uint32_t filtered[WLR_KEYBOARD_KEYS_CAP];
+	size_t size = 0;
+	if (!kb) {
 		wlr_seat_keyboard_notify_enter(seat, s, NULL, 0, NULL);
+		return;
+	}
+	for (size_t i = 0; i < kb->num_keycodes; i++) {
+		uint32_t key = kb->keycodes[i];
+		if (!consumed[key])
+			filtered[size++] = key;
+	}
+	wlr_seat_keyboard_notify_enter(seat, s, filtered, size, &kb->modifiers);
 }
 
 static inline void

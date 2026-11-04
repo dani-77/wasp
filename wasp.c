@@ -511,7 +511,7 @@ static void gpureset(struct wl_listener *listener, void *data);
 static void handlesig(int signo);
 static void incnmaster(const Arg *arg);
 static void inputdevice(struct wl_listener *listener, void *data);
-static int keybinding(uint32_t mods, xkb_keysym_t sym);
+static const Key *keybinding(uint32_t mods, xkb_keysym_t sym);
 static void keypress(struct wl_listener *listener, void *data);
 static void keypressmod(struct wl_listener *listener, void *data);
 static int keyrepeat(void *data);
@@ -684,6 +684,7 @@ static struct wlr_output_layout *output_layout;
 static struct wlr_box sgeom;
 static struct wl_list mons;
 static Monitor *selmon;
+static int consumed[KEY_MAX + 1];
 
 static char stext[256];
 static struct wl_event_source *status_event_source;
@@ -3386,7 +3387,7 @@ inputdevice(struct wl_listener *listener, void *data)
 	wlr_seat_set_capabilities(seat, caps);
 }
 
-int
+const Key *
 keybinding(uint32_t mods, xkb_keysym_t sym)
 {
 	/*
@@ -3404,11 +3405,10 @@ keybinding(uint32_t mods, xkb_keysym_t sym)
 		if (CLEANMASK(mods) == CLEANMASK(k->mod)
 				&& xkb_keysym_to_lower(sym) == xkb_keysym_to_lower(k->keysym)
 				&& k->func) {
-			k->func(&k->arg);
-			return 1;
+			return k;
 		}
 	}
-	return 0;
+	return NULL;
 }
 
 void
@@ -3434,8 +3434,14 @@ keypress(struct wl_listener *listener, void *data)
 	/* On _press_ if there is no active screen locker,
 	 * attempt to process a compositor keybinding. */
 	if (!locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
-		for (i = 0; i < nsyms; i++)
-			handled = keybinding(mods, syms[i]) || handled;
+		for (i = 0; i < nsyms; i++) {
+			const Key *key = keybinding(mods, syms[i]);
+			if (key) {
+				consumed[event->keycode] = 1;
+				key->func(&key->arg);
+				handled = 1;
+			}
+		}
 	}
 
 	if (handled && group->wlr_group->keyboard.repeat_info.delay > 0) {
@@ -3452,6 +3458,11 @@ keypress(struct wl_listener *listener, void *data)
 	if (handled)
 		return;
 
+	if (consumed[event->keycode]) {
+		if (event->state == WL_KEYBOARD_KEY_STATE_RELEASED)
+			consumed[event->keycode] = 0;
+		return; /* Don't pass to the client the release event of a handled key-press */
+	}
 	wlr_seat_set_keyboard(seat, &group->wlr_group->keyboard);
 	/* Pass unhandled keycodes along to the client. */
 	wlr_seat_keyboard_notify_key(seat, event->time_msec,
@@ -3482,8 +3493,11 @@ keyrepeat(void *data)
 	wl_event_source_timer_update(group->key_repeat_source,
 			1000 / group->wlr_group->keyboard.repeat_info.rate);
 
-	for (i = 0; i < group->nsyms; i++)
-		keybinding(group->mods, group->keysyms[i]);
+	for (i = 0; i < group->nsyms; i++) {
+		const Key *key = keybinding(group->mods, group->keysyms[i]);
+		if (key)
+			key->func(&key->arg);
+	}
 
 	return 0;
 }
