@@ -96,11 +96,6 @@ build_default_keys(void)
 		XKB_KEY_1, XKB_KEY_2, XKB_KEY_3, XKB_KEY_4, XKB_KEY_5,
 		XKB_KEY_6, XKB_KEY_7, XKB_KEY_8, XKB_KEY_9,
 	};
-	static const xkb_keysym_t tagshiftsyms[9] = {
-		XKB_KEY_exclam, XKB_KEY_at, XKB_KEY_numbersign, XKB_KEY_dollar,
-		XKB_KEY_percent, XKB_KEY_asciicircum, XKB_KEY_ampersand,
-		XKB_KEY_asterisk, XKB_KEY_parenleft,
-	};
 	static const xkb_keysym_t vtsyms[12] = {
 		XKB_KEY_XF86Switch_VT_1, XKB_KEY_XF86Switch_VT_2, XKB_KEY_XF86Switch_VT_3,
 		XKB_KEY_XF86Switch_VT_4, XKB_KEY_XF86Switch_VT_5, XKB_KEY_XF86Switch_VT_6,
@@ -129,7 +124,7 @@ build_default_keys(void)
 
 	for (i = 0; i < 9; i++) {
 		default_keys[n++] = (Key){ modkey, tagsyms[i], viewfn, (Arg){.ui = 1u << i} };
-		default_keys[n++] = (Key){ modkey | WLR_MODIFIER_SHIFT, tagshiftsyms[i], tagfn, (Arg){.ui = 1u << i} };
+		default_keys[n++] = (Key){ modkey | WLR_MODIFIER_SHIFT, tagsyms[i], tagfn, (Arg){.ui = 1u << i} };
 	}
 
 	for (i = 0; i < 12; i++)

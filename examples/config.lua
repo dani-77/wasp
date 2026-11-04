@@ -177,6 +177,11 @@ wasp.rules = {
 -- ("j", "1"), symbols ("comma", "exclam"), named keys ("Return", "space"),
 -- function/media keys ("F1", "XF86AudioRaiseVolume"), arrows, etc.
 --
+-- A key matches by its unshifted or shifted symbol on the active layout,
+-- so { "mod", "shift" } + "2" works on any layout (no need to name the
+-- shifted symbol, which differs between layouts: "at" on us, "quotedbl"
+-- on pt). Naming the shifted symbol ("exclam") still works too.
+--
 -- Actions and their fields:
 --   spawn            cmd = {argv...}       run an arbitrary command
 --   spawn-terminal    (none)               run wasp.terminal
@@ -266,8 +271,8 @@ bind({ "mod" }, "b", "togglebar")
 -- Monitor navigation
 bind({ "mod" },          "comma",  "focusmon", { dir = "left" })
 bind({ "mod" },          "period", "focusmon", { dir = "right" })
-bind({ "mod", "shift" }, "less",    "tagmon",   { dir = "left" })
-bind({ "mod", "shift" }, "greater", "tagmon",   { dir = "right" })
+bind({ "mod", "shift" }, "comma",  "tagmon",   { dir = "left" })
+bind({ "mod", "shift" }, "period", "tagmon",   { dir = "right" })
 
 -- Live output-scale inc/dec — same Mod+Shift+P/M as spitfire, so muscle
 -- memory carries over between the two.
@@ -276,16 +281,14 @@ bind({ "mod", "shift" }, "m", "setscale", { delta = -0.25 })
 
 -- Workspaces (tags) 1-9: switch/also-show/move-window/also-tag-window
 local tagkeys = { "1", "2", "3", "4", "5", "6", "7", "8", "9" }
-local tagshiftkeys = { "exclam", "at", "numbersign", "dollar", "percent",
-                        "asciicircum", "ampersand", "asterisk", "parenleft" }
 for i, key in ipairs(tagkeys) do
   bind({ "mod" },                     key,              "view",       { tag = i })
   bind({ "mod", "ctrl" },             key,              "toggleview", { tag = i })
-  bind({ "mod", "shift" },            tagshiftkeys[i],  "tag",        { tag = i })
-  bind({ "mod", "ctrl", "shift" },    tagshiftkeys[i],  "toggletag",  { tag = i })
+  bind({ "mod", "shift" },            key,              "tag",        { tag = i })
+  bind({ "mod", "ctrl", "shift" },    key,              "toggletag",  { tag = i })
 end
 bind({ "mod" },          "0",           "view", { tag = "all" })
-bind({ "mod", "shift" }, "parenright",  "tag",  { tag = "all" })
+bind({ "mod", "shift" }, "0",           "tag",  { tag = "all" })
 
 -- Window/session control
 bind({ "mod", "shift" }, "c", "killclient")

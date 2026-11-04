@@ -276,9 +276,12 @@ typedef struct {
 typedef struct {
 	struct wlr_keyboard_group *wlr_group;
 
-	int nsyms;
-	const xkb_keysym_t *keysyms; /* invalid if nsyms == 0 */
-	uint32_t mods; /* invalid if nsyms == 0 */
+	/* wasp: level 0/1 keysyms first (layout-independent: Mod+Shift+2
+	 * matches a "2" binding on any layout), then the effective keysym,
+	 * so bindings only reachable through it (XF86Switch_VT_n,
+	 * Terminate_Server) and existing configs keep working. */
+	xkb_keysym_t keysyms[3];
+	uint32_t mods;
 	struct wl_event_source *key_repeat_source;
 
 	struct wl_listener modifiers;
@@ -3400,6 +3403,8 @@ keybinding(uint32_t mods, xkb_keysym_t sym)
 	 * anymore -- walk it by count instead. */
 	size_t ki;
 	const Key *k;
+	if (sym == XKB_KEY_NoSymbol)
+		return NULL;
 	for (ki = 0; ki < nkeys; ki++) {
 		k = &keys[ki];
 		if (CLEANMASK(mods) == CLEANMASK(k->mod)
@@ -3421,39 +3426,41 @@ keypress(struct wl_listener *listener, void *data)
 
 	/* Translate libinput keycode -> xkbcommon */
 	uint32_t keycode = event->keycode + 8;
-	/* Get a list of keysyms based on the keymap for this keyboard */
-	const xkb_keysym_t *syms;
-	int nsyms = xkb_state_key_get_syms(
-			group->wlr_group->keyboard.xkb_state, keycode, &syms);
-
+	struct wlr_keyboard *kb = &group->wlr_group->keyboard;
+	xkb_layout_index_t layout = xkb_state_key_get_layout(kb->xkb_state, keycode);
 	int handled = 0;
-	uint32_t mods = wlr_keyboard_get_modifiers(&group->wlr_group->keyboard);
+
+	/* Only one keysym per level: multiple keysyms per keycode don't
+	 * really exist in the real world */
+	for (i = 0; i < 2; i++) {
+		const xkb_keysym_t *syms;
+		group->keysyms[i] = xkb_keymap_key_get_syms_by_level(kb->keymap,
+				keycode, layout, (xkb_level_index_t)i, &syms) ? syms[0] : XKB_KEY_NoSymbol;
+	}
+	group->keysyms[2] = xkb_state_key_get_one_sym(kb->xkb_state, keycode);
+	group->mods = wlr_keyboard_get_modifiers(kb);
 
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 
 	/* On _press_ if there is no active screen locker,
 	 * attempt to process a compositor keybinding. */
 	if (!locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
-		for (i = 0; i < nsyms; i++) {
-			const Key *key = keybinding(mods, syms[i]);
+		for (i = 0; i < 3; i++) {
+			const Key *key = keybinding(group->mods, group->keysyms[i]);
 			if (key) {
 				consumed[event->keycode] = 1;
 				key->func(&key->arg);
 				handled = 1;
+				break;
 			}
 		}
 	}
 
-	if (handled && group->wlr_group->keyboard.repeat_info.delay > 0) {
-		group->mods = mods;
-		group->keysyms = syms;
-		group->nsyms = nsyms;
+	if (handled && group->wlr_group->keyboard.repeat_info.delay > 0)
 		wl_event_source_timer_update(group->key_repeat_source,
 				group->wlr_group->keyboard.repeat_info.delay);
-	} else {
-		group->nsyms = 0;
+	else
 		wl_event_source_timer_update(group->key_repeat_source, 0);
-	}
 
 	if (handled)
 		return;
@@ -3487,16 +3494,18 @@ keyrepeat(void *data)
 {
 	KeyboardGroup *group = data;
 	int i;
-	if (locked || !group->nsyms || group->wlr_group->keyboard.repeat_info.rate <= 0)
+	if (locked || group->wlr_group->keyboard.repeat_info.rate <= 0)
 		return 0;
 
 	wl_event_source_timer_update(group->key_repeat_source,
 			1000 / group->wlr_group->keyboard.repeat_info.rate);
 
-	for (i = 0; i < group->nsyms; i++) {
+	for (i = 0; i < 3; i++) {
 		const Key *key = keybinding(group->mods, group->keysyms[i]);
-		if (key)
+		if (key) {
 			key->func(&key->arg);
+			break;
+		}
 	}
 
 	return 0;
