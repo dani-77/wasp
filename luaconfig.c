@@ -41,6 +41,7 @@ int repeat_delay;
 unsigned int gapsinner;
 unsigned int gapsouter;
 int gapsmart;
+unsigned int snap;
 int animations_enable;
 unsigned int animdur_move, animdur_open, animdur_close, animdur_tag;
 const char *animtype_open, *animtype_close;
@@ -157,6 +158,7 @@ set_defaults(void)
 	gapsinner = 0;
 	gapsouter = 0;
 	gapsmart = 0;
+	snap = 32;
 	animations_enable = 0; /* off by default -- see load_animations()/wasp.animations */
 	animdur_move = animdur_open = animdur_tag = 200;
 	animdur_close = 150;
@@ -1254,6 +1256,7 @@ waspconfig_load(void)
 		load_bar(L, wasptbl);
 		load_background(L, wasptbl);
 		load_gaps(L, wasptbl);
+		read_int_field(L, wasptbl, "snap", &snap);
 		load_animations(L, wasptbl);
 		load_blur(L, wasptbl);
 		load_keyboard(L, wasptbl);

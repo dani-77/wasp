@@ -70,6 +70,10 @@ extern unsigned int gapsinner;
 extern unsigned int gapsouter;
 extern int gapsmart;
 
+/* snap -- a floating window dragged with the mouse snaps to the edges of
+ * the monitor's usable area once within this many pixels; 0 disables. */
+extern unsigned int snap;
+
 /* wasp.animations = { enable=, duration_move=, duration_open=,
  * duration_close=, duration_tag=, type_open=, type_close=, zoom_ratio=,
  * fade_from_opacity=, tag_direction=, curve_move=, curve_open=,

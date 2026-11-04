@@ -37,6 +37,10 @@ wasp.gaps = {
   smart = false,
 }
 
+-- Floating windows dragged with the mouse snap to the monitor's edges
+-- within this many pixels (0 = off).
+wasp.snap = 32
+
 -- Open/close/move/tag-switch tweening on top of the wlr_scene graph.
 -- enable = false reproduces the original instant behavior bit-for-bit.
 -- type_open/type_close: "fade" | "zoom" | "none". tag_direction is which
