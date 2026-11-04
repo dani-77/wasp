@@ -517,6 +517,7 @@ static Client *focustop(Monitor *m);
 static void fullscreennotify(struct wl_listener *listener, void *data);
 static void gpureset(struct wl_listener *listener, void *data);
 static void handlesig(int signo);
+static int hupin(int fd, uint32_t mask, void *data);
 static void incnmaster(const Arg *arg);
 static void inputdevice(struct wl_listener *listener, void *data);
 static const Key *keybinding(uint32_t mods, xkb_keysym_t sym);
@@ -700,6 +701,12 @@ static int consumed[KEY_MAX + 1];
 
 static char stext[256];
 static struct wl_event_source *status_event_source;
+/* SIGHUP -> reload(): handlesig() only writes a byte to hup_pipe[1] (the one
+ * async-signal-safe thing it can do); hupin() runs from the event loop and
+ * does the real work. A pipe instead of wl_event_loop_add_signal() because
+ * the latter blocks SIGHUP process-wide, and spawned clients would inherit
+ * that blocked mask across exec. */
+static int hup_pipe[2] = {-1, -1};
 
 static const struct wlr_buffer_impl buffer_impl = {
     .destroy = bufdestroy,
@@ -3443,7 +3450,24 @@ handlesig(int signo)
 		}
 	} else if (signo == SIGINT || signo == SIGTERM) {
 		quit(NULL);
+	} else if (signo == SIGHUP && hup_pipe[1] >= 0) {
+		int saved = errno;
+		(void)!write(hup_pipe[1], "", 1);
+		errno = saved;
 	}
+}
+
+int
+hupin(int fd, uint32_t mask, void *data)
+{
+	/* `pkill -HUP -x wasp` (what Kantele's "Save and apply" sends) does the
+	 * same as the reload action. Drain first: several signals in a row
+	 * still mean one reload. */
+	char buf[64];
+	while (read(fd, buf, sizeof(buf)) > 0)
+		;
+	reload(NULL);
+	return 0;
 }
 
 void
@@ -4683,10 +4707,16 @@ setsel(struct wl_listener *listener, void *data)
 void
 setup(void)
 {
-	int drm_fd, i, sig[] = {SIGCHLD, SIGINT, SIGTERM, SIGPIPE};
+	int drm_fd, i, sig[] = {SIGCHLD, SIGINT, SIGTERM, SIGPIPE, SIGHUP};
 	struct sigaction sa = {.sa_flags = SA_RESTART, .sa_handler = handlesig};
 	sigemptyset(&sa.sa_mask);
 
+	if (pipe(hup_pipe) < 0)
+		die("pipe:");
+	for (i = 0; i < 2; i++) {
+		fcntl(hup_pipe[i], F_SETFD, FD_CLOEXEC);
+		fcntl(hup_pipe[i], F_SETFL, O_NONBLOCK);
+	}
 	for (i = 0; i < (int)LENGTH(sig); i++)
 		sigaction(sig[i], &sa, NULL);
 
@@ -4930,6 +4960,7 @@ setup(void)
 
 	status_event_source = wl_event_loop_add_fd(wl_display_get_event_loop(dpy),
 		STDIN_FILENO, WL_EVENT_READABLE, statusin, NULL);
+	wl_event_loop_add_fd(event_loop, hup_pipe[0], WL_EVENT_READABLE, hupin, NULL);
 
 	/* Make sure XWayland clients don't connect to the parent X server,
 	 * e.g when running in the x11 backend or the wayland backend and the
