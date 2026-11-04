@@ -31,5 +31,17 @@
 # generic portals.conf -- it reads this from the environment it's
 # D-Bus-activated in, which is this session bus, so it has to be set here,
 # before dbus-run-session hands off, not later inside wasp itself.
+#
+# Everything the session prints (wasp's own errors included) goes to
+# $XDG_STATE_HOME/wasp/wasp.log instead of the greeter's tty, where the
+# next login would overwrite it. The previous session's log is kept as
+# wasp.log.old, so a crash can be read after logging back in. Core dumps
+# are enabled for the same reason (they land in the session's working
+# directory, normally $HOME).
 export XDG_CURRENT_DESKTOP=wasp
+logdir=${XDG_STATE_HOME:-$HOME/.local/state}/wasp
+mkdir -p "$logdir"
+[ -f "$logdir/wasp.log" ] && mv -f "$logdir/wasp.log" "$logdir/wasp.log.old"
+exec >"$logdir/wasp.log" 2>&1
+ulimit -c unlimited 2>/dev/null
 exec dbus-run-session -- sh -c 'exec wasp-statusbar | exec wasp'
