@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <getopt.h>
 #include <libinput.h>
+#include <limits.h>
 #include <linux/input-event-codes.h>
 #include <math.h>
 #include <libdrm/drm_fourcc.h>
@@ -817,9 +818,22 @@ wasp_layout_by_name(const char *name)
 void
 applybounds(Client *c, struct wlr_box *bbox)
 {
-	/* set minimum possible */
+	/* set minimum client size to 1 */
 	c->geom.width = MAX(1 + 2 * (int)c->bw, c->geom.width);
 	c->geom.height = MAX(1 + 2 * (int)c->bw, c->geom.height);
+
+	if (!c->isfullscreen) {
+		struct wlr_box min = {0}, max = {0};
+		client_get_size_hints(c, &max, &min);
+		c->geom.width = MAX(min.width + 2 * (int)c->bw, c->geom.width);
+		c->geom.height = MAX(min.height + 2 * (int)c->bw, c->geom.height);
+		/* Some clients set their max size to INT_MAX, which does not violate the
+		 * protocol but it's unnecesary, as they can set their max size to zero. */
+		if (max.width > 0 && 2 * (int)c->bw <= INT_MAX - max.width) /* Checks for overflow */
+			c->geom.width = MIN(max.width + 2 * (int)c->bw, c->geom.width);
+		if (max.height > 0 && 2 * (int)c->bw <= INT_MAX - max.height) /* Checks for overflow */
+			c->geom.height = MIN(max.height + 2 * (int)c->bw, c->geom.height);
+	}
 
 	if (c->geom.x >= bbox->x + bbox->width)
 		c->geom.x = bbox->x + bbox->width - c->geom.width;
