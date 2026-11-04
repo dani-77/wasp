@@ -4,13 +4,13 @@ wasp is a fork of [dwl](https://codeberg.org/dwl/dwl), branched from its
 `main` on 2026-02-25 (after dwl 0.8). Entries from dwl are tagged with
 the upstream commit they come from.
 
-* [Unreleased](#unreleased)
+* [0.10.0](#0100)
 * [0.9.1](#091)
 * [0.9.0](#090)
 * [dwl history](#dwl-history)
 
 
-## Unreleased
+## 0.10.0
 
 Selected fixes and features ported from dwl 0.9 and dwl `main` (up to
 a6e2c15, 2026-11-01), plus wasp fixes found along the way.
