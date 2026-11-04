@@ -1,12 +1,118 @@
 # Changelog
 
+wasp is a fork of [dwl](https://codeberg.org/dwl/dwl), branched from its
+`main` on 2026-02-25 (after dwl 0.8). Entries from dwl are tagged with
+the upstream commit they come from.
+
 * [Unreleased](#unreleased)
-* [0.7](#0.7)
-* [0.6](#0.6)
-* [0.5](#0.5)
+* [0.9.1](#091)
+* [0.9.0](#090)
+* [dwl history](#dwl-history)
 
 
 ## Unreleased
+
+Selected fixes and features ported from dwl 0.9 and dwl `main` (up to
+a6e2c15, 2026-11-01), plus wasp fixes found along the way.
+
+### Added
+
+* `wasp.wheel`: mouse wheel bindings, same entry shape and actions as
+  `wasp.keys` and `wasp.gestures`. Only a real wheel runs them, once per
+  notch; nothing is bound by default (dwl e8bf70d, fa400c5, 40b0ae7).
+* `wasp.snap`: floating windows dragged with the mouse snap to the
+  monitor's edges within this many pixels; default 32, 0 disables
+  (dwl 8f52e96).
+* `focusmon`/`tagmon` accept `dir = "up"` and `"down"` (dwl 5fd19fe).
+* layer-shell v4: on-demand keyboard interactivity (dwl 0a6dc6d).
+* Seat capabilities are set for virtual keyboards and pointers, so they
+  work with no physical input device (dwl 99cdc9a).
+* The output swapchain manager is used when applying output
+  configurations (dwl dc9a860).
+
+### Changed
+
+* Keybindings match a key's unshifted or shifted symbol on the active
+  layout, so `{ "mod", "shift" }` + `"2"` works on any layout. The
+  effective symbol is still tried, so existing configs naming shifted
+  symbols, `XF86Switch_VT_n` and `Terminate_Server` keep working
+  (dwl f9c644f, bab3fda). The default keymap and `examples/config.lua`
+  now use `1`-`9`, `0`, `comma` and `period` with Shift.
+* Clients' min/max size hints are respected (dwl 4de32d2, 1dae5ba,
+  45054a3).
+* Unmanaged X11 clients get their own scene layer, above fullscreen
+  clients (dwl 1fe1b4e).
+* Focus leaves an unmanaged surface (a menu) properly: its parent is
+  deactivated so it closes the menu; focusing a menu or layer surface
+  keeps the parent's focused border color (dwl f6e3a28, 6013835,
+  669b26d).
+* Outputs turned off by a client stay off when they reconnect
+  (dwl 4953b7e).
+* Focus goes to the visible fullscreen client after a tag switch
+  (dwl a6e2c15).
+
+### Removed
+
+* The rendermon() frame skip for pending resizes, which made resizing
+  choppy (dwl 70c33c0, 90e7c72).
+
+### Fixed
+
+* Use-after-free when destroying a client with a decoration
+  (dwl f4dfdab, 04279f2).
+* Use-after-free in the idle inhibitor check after a client unmaps
+  (dwl 4847f97).
+* Use-after-free of the foreign-toplevel handle (title change while
+  unmapped) and of the window capture source (capture after a remap).
+* Crash on exit when XWayland failed to start (dwl f08d8b3).
+* Crash with more outputs than the GPU supports (dwl afbafd5, 9dfaea2).
+* While locked: keybindings no longer run on key repeat, clients no
+  longer get pointer events, and `wasp.gestures` swipes no longer run
+  their actions (dwl f22c223, b83881f).
+* The release of a key used by a binding is no longer sent to the
+  client that gets the focus (dwl f6800e9).
+* Asleep disabled outputs are kept in the output configuration
+  (dwl babccfe).
+* Cursor image after an interactive move/resize (dwl 8ad2c92).
+* Floating windows mapped offset by their client-side decorations, and
+  popup positioning (dwl 2a56719, e203845).
+* Firefox opening with rounded corners when tiled (dwl d1ebf3c,
+  d9ddaba).
+* Unmanaged X11 windows not following their own geometry changes, and
+  X11 clients shifting by the border width on map (dwl e451862,
+  4fd683c).
+
+### Contributors
+
+Thanks to the dwl contributors whose work is ported here: Alex Denes,
+Andrea Chiavazza, brinkpw, DanD, DreamMaoMao, Guido Cella, guyuming,
+julmajustus, klim, Leonardo Hernández Hernández, MayOrMayNotBeACat,
+Peter Hofmann, save196, sewn.
+
+
+## 0.9.1
+
+* Statusbar pipe no longer leaks into autostart children.
+* Capture-manager listeners are removed on cleanup.
+* Packaging: missing fcft/pixman/tllist/wayland-protocols dependencies.
+* Leftover "dwl" strings from the fork rename (`-v`, execvp failure,
+  fallback bar text).
+
+
+## 0.9.0
+
+First wasp release: live Lua config with hot-reload, named scratchpads,
+animations, per-output rules and live scale, ext-workspace-v1, window
+rules, rounded corners and blur (scenefx), touchpad gestures, the
+modern screen-capture protocols with per-window capture privacy. See
+NOTES.md and doc/DEVELOPMENT.md.
+
+
+## dwl history
+
+Changes from dwl itself up to the fork, kept as dwl wrote them.
+
+## dwl, after 0.7
 ### Added
 
 * Support for the linux-drm-syncobj-v1 protocol ([wlroots!4715][wlroots!4715], [#685][685])
@@ -28,7 +134,7 @@
 ### Contributors
 
 
-## 0.7
+## dwl 0.7
 
 This version is just 0.6 with wlroots 0.18 compatibility.
 
@@ -46,7 +152,7 @@ This version is just 0.6 with wlroots 0.18 compatibility.
 Guido Cella
 
 
-## 0.6
+## dwl 0.6
 
 ### Added
 
@@ -121,7 +227,7 @@ sewn
 thanatos
 
 
-## 0.5
+## dwl 0.5
 
 ### Added
 
