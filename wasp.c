@@ -4202,15 +4202,13 @@ rendermon(struct wl_listener *listener, void *data)
 	 * generally at the output's refresh rate (e.g. 60Hz). */
 	Monitor *m = wl_container_of(listener, m, frame);
 	Client *c;
-	struct wlr_output_state pending = {0};
 	struct timespec now;
 	int more = 0;
 	int ticked = 0;
 	uint32_t t = now_ms();
 
 	/* wasp: tick every animating client and closing-client snapshot once
-	 * per output refresh, before the pending-resize check and commit
-	 * below, so a tween's new frame is what actually gets presented this
+	 * per output refresh, before the commit below, so a tween's new frame is what actually gets presented this
 	 * pass (wasp.animations, see NOTES.md item 3). Every monitor's own
 	 * frame event ticks the same global lists independently -- harmless
 	 * with >1 monitor, since animate_client()/tick_closing_clients() are
@@ -4229,26 +4227,15 @@ rendermon(struct wl_listener *listener, void *data)
 		more = tick_closing_clients() || more;
 	}
 
-	/* Render if no XDG clients have an outstanding resize and are visible on
-	 * this monitor. */
-	wl_list_for_each(c, &clients, link) {
-		if (c->resize && !c->isfloating && client_is_rendered_on_mon(c, m) && !client_is_stopped(c))
-			goto skip;
-	}
-
 	wlr_scene_output_commit(m->scene_output, NULL);
 
-skip:
 	/* Let clients know a frame has been rendered */
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	wlr_scene_output_send_frame_done(m->scene_output, &now);
-	wlr_output_state_finish(&pending);
 
 	/* wasp: re-arm for another frame while anything is still animating --
-	 * must not be gated on whether *this* call actually committed (the
-	 * skip: case above still needs to keep ticking), but *is* gated on
-	 * `ticked` (see ANIM_TICK_MIN_MS above) so a throttled pass doesn't
-	 * perpetuate its own re-arming. */
+	 * gated on `ticked` (see ANIM_TICK_MIN_MS above) so a throttled pass
+	 * doesn't perpetuate its own re-arming. */
 	if (ticked && more)
 		reschedule_all_outputs();
 }
