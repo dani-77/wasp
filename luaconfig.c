@@ -63,6 +63,8 @@ MonitorRule *monrules;
 size_t nmonrules;
 Gesture *gestures;
 size_t ngestures;
+Axis *axes;
+size_t naxes;
 
 /* Primary modifier for config.lua keybinds that say mods = {"mod", ...} --
  * set via wasp.modkey ("alt"/"ctrl"/"super"/"shift"), defaults to Alt (what
@@ -206,6 +208,8 @@ set_defaults(void)
 	                   * reasoning as rules above -- swipes just do nothing
 	                   * until wasp.gestures configures some. */
 	ngestures = 0;
+	axes = NULL; /* same reasoning as gestures above */
+	naxes = 0;
 }
 
 /* ~/.config/wasp/config.lua, or $XDG_CONFIG_HOME/wasp/config.lua if set.
@@ -544,6 +548,28 @@ keybit_from_name(const char *name)
 	if (!strcmp(name, "mod"))
 		return modkey;
 	return basemod_from_name(name);
+}
+
+/* Reads entry table `e`'s mods array ({ "mod", "shift", ... }) into a
+ * wlr modifier mask, as wasp.keys and wasp.wheel entries spell it. */
+static uint32_t
+read_mods(lua_State *L, int e)
+{
+	uint32_t mod = 0;
+
+	lua_getfield(L, e, "mods");
+	if (lua_istable(L, -1)) {
+		int mt = lua_gettop(L);
+		int mn = (int)lua_rawlen(L, mt), mi;
+		for (mi = 1; mi <= mn; mi++) {
+			lua_rawgeti(L, mt, mi);
+			if (lua_isstring(L, -1))
+				mod |= keybit_from_name(lua_tostring(L, -1));
+			lua_pop(L, 1);
+		}
+	}
+	lua_pop(L, 1); /* mods */
+	return mod;
 }
 
 /* Reads a Lua array of strings at stack index tblidx into a freshly
@@ -1076,7 +1102,7 @@ load_keys(lua_State *L, int wasptbl)
 
 	for (i = 1; i <= n; i++) {
 		int e;
-		uint32_t mod = 0;
+		uint32_t mod;
 		const char *action;
 		ActionFn fn;
 		xkb_keysym_t sym;
@@ -1088,18 +1114,7 @@ load_keys(lua_State *L, int wasptbl)
 		}
 		e = lua_gettop(L);
 
-		lua_getfield(L, e, "mods");
-		if (lua_istable(L, -1)) {
-			int mt = lua_gettop(L);
-			int mn = (int)lua_rawlen(L, mt), mi;
-			for (mi = 1; mi <= mn; mi++) {
-				lua_rawgeti(L, mt, mi);
-				if (lua_isstring(L, -1))
-					mod |= keybit_from_name(lua_tostring(L, -1));
-				lua_pop(L, 1);
-			}
-		}
-		lua_pop(L, 1); /* mods */
+		mod = read_mods(L, e);
 
 		lua_getfield(L, e, "key");
 		sym = lua_isstring(L, -1)
@@ -1231,6 +1246,82 @@ load_gestures(lua_State *L, int wasptbl)
 	}
 }
 
+/* wasp.wheel = { { mods = { "mod" }, direction = "up", action = "viewshift",
+ *                  dir = -1 }, ... } -- see Axis in luaconfig.h. */
+static void
+load_wheel(lua_State *L, int wasptbl)
+{
+	int t, n, i;
+	Axis *buf;
+	size_t count = 0;
+	static const char *dirnames[4] = { "up", "right", "down", "left" }; /* Axis* order */
+
+	lua_getfield(L, wasptbl, "wheel");
+	if (!lua_istable(L, -1)) {
+		lua_pop(L, 1);
+		return;
+	}
+	t = lua_gettop(L);
+	n = (int)lua_rawlen(L, t);
+	if (n <= 0) {
+		lua_pop(L, 1);
+		return;
+	}
+
+	buf = calloc((size_t)n, sizeof(Axis));
+	if (!buf) {
+		lua_pop(L, 1);
+		return;
+	}
+
+	for (i = 1; i <= n; i++) {
+		int e, di = 4;
+		const char *action;
+		const char *dirstr;
+		ActionFn fn;
+
+		lua_rawgeti(L, t, i);
+		if (!lua_istable(L, -1)) {
+			lua_pop(L, 1);
+			continue;
+		}
+		e = lua_gettop(L);
+
+		lua_getfield(L, e, "action");
+		action = lua_isstring(L, -1) ? lua_tostring(L, -1) : NULL;
+		fn = action ? wasp_lookup_action(action) : NULL;
+		lua_pop(L, 1); /* action */
+
+		lua_getfield(L, e, "direction");
+		dirstr = lua_isstring(L, -1) ? lua_tostring(L, -1) : NULL;
+		for (di = 0; dirstr && di < 4; di++)
+			if (!strcmp(dirstr, dirnames[di]))
+				break;
+		lua_pop(L, 1); /* direction */
+
+		if (!fn || !dirstr || di == 4) {
+			lua_pop(L, 1); /* entry table */
+			continue;
+		}
+
+		buf[count].mod = read_mods(L, e);
+		buf[count].dir = (unsigned int)di;
+		buf[count].func = fn;
+		buf[count].arg = build_key_arg(L, e, action);
+		count++;
+
+		lua_pop(L, 1); /* entry table */
+	}
+	lua_pop(L, 1); /* wheel table */
+
+	if (count > 0) {
+		axes = buf; /* leaked on reload, same as gestures */
+		naxes = count;
+	} else {
+		free(buf);
+	}
+}
+
 void
 waspconfig_load(void)
 {
@@ -1268,6 +1359,7 @@ waspconfig_load(void)
 		load_rules(L, wasptbl);
 		load_monitors(L, wasptbl);
 		load_gestures(L, wasptbl);
+		load_wheel(L, wasptbl);
 	}
 	lua_pop(L, 1); /* the wasp global (or whatever lua_getglobal pushed) */
 

@@ -247,6 +247,22 @@ typedef struct {
 extern Gesture *gestures;
 extern size_t ngestures;
 
+/* wasp.wheel = { { mods=, direction=, action=, ... }, ... } -- mouse wheel
+ * bindings (dwl's Axis), dispatched through the same action/arg machinery
+ * as wasp.keys/wasp.gestures. `direction` is "up"/"down"/"left"/"right".
+ * Only a real wheel triggers them, once per notch -- see axisnotify() in
+ * wasp.c. A missing/empty wasp.wheel binds nothing, same as wasp.rules. */
+enum { AxisUp, AxisRight, AxisDown, AxisLeft };
+typedef struct {
+	uint32_t mod;
+	unsigned int dir;
+	void (*func)(const Arg *);
+	Arg arg;
+} Axis;
+
+extern Axis *axes;
+extern size_t naxes;
+
 /* Loads (or reloads) the config, overwriting the globals above in place.
  * Safe to call again later for a hot-reload once callers redraw/rearrange
  * afterwards -- nothing here restarts the compositor, and it never

@@ -1959,9 +1959,43 @@ axisnotify(struct wl_listener *listener, void *data)
 	/* This event is forwarded by the cursor when a pointer emits an axis event,
 	 * for example when you move the scroll wheel. */
 	struct wlr_pointer_axis_event *event = data;
+	static int32_t notch[2]; /* per orientation, in 120ths of a notch */
+	struct wlr_keyboard *keyboard;
+	uint32_t mods;
+	unsigned int adir;
+	size_t ai;
+
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
-	/* TODO: allow usage of scroll wheel for mousebindings, it can be implemented
-	 * by checking the event's orientation and the delta of the event */
+
+	/* wasp: only a real wheel runs wasp.wheel bindings, once per notch.
+	 * delta_discrete is in 120ths of a notch, which high-resolution wheels
+	 * split over several events, and touchpad (continuous) scrolling would
+	 * otherwise run a binding dozens of times per swipe. */
+	if (!locked && event->delta_discrete
+			&& (event->source == WL_POINTER_AXIS_SOURCE_WHEEL
+				|| event->source == WL_POINTER_AXIS_SOURCE_WHEEL_TILT)) {
+		if (event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL)
+			adir = event->delta_discrete > 0 ? AxisDown : AxisUp;
+		else
+			adir = event->delta_discrete > 0 ? AxisRight : AxisLeft;
+		keyboard = wlr_seat_get_keyboard(seat);
+		mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
+		for (ai = 0; ai < naxes; ai++) {
+			const Axis *a = &axes[ai];
+			int32_t *n = &notch[event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL];
+			if (CLEANMASK(mods) != CLEANMASK(a->mod) || adir != a->dir || !a->func)
+				continue;
+			if ((*n > 0) != (event->delta_discrete > 0))
+				*n = 0; /* direction changed mid-notch */
+			*n += event->delta_discrete;
+			if (abs(*n) >= 120) {
+				*n %= 120;
+				a->func(&a->arg);
+			}
+			return;
+		}
+	}
+
 	/* Notify the client with pointer focus of the axis event. */
 	wlr_seat_pointer_notify_axis(seat,
 			event->time_msec, event->orientation, event->delta,

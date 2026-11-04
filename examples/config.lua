@@ -314,6 +314,18 @@ for vt = 1, 12 do
 end
 bind({ "ctrl", "alt" }, "Terminate_Server", "quit")
 
+-- Mouse wheel bindings ---------------------------------------------------
+-- { mods = {...}, direction = "up"|"down"|"left"|"right", action = "...",
+--   <action-specific fields> } — same action table as wasp.keys above.
+-- Only a real wheel runs these, once per notch; touchpad scrolling always
+-- goes to the window under the cursor. An unbound mods+direction combo
+-- scrolls the window as usual.
+wasp.wheel = {
+  -- Mod+wheel: previous/next workspace, wrapping (9 -> 1, 1 -> 9).
+  -- { mods = { "mod" }, direction = "up",   action = "viewshift", dir = -1 },
+  -- { mods = { "mod" }, direction = "down", action = "viewshift", dir = 1 },
+}
+
 -- Touchpad gestures ------------------------------------------------------
 -- { fingers = <count, omit/0 = any>, direction = "left"|"right"|"up"|"down",
 --   action = "...", <action-specific fields> } — same action table as
