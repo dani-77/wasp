@@ -3670,6 +3670,11 @@ mapnotify(struct wl_listener *listener, void *data)
 	client_set_tiled(c, WLR_EDGE_TOP | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT | WLR_EDGE_RIGHT);
 	c->geom.width += 2 * c->bw;
 	c->geom.height += 2 * c->bw;
+	if (client_is_x11(c)) {
+		int x = c->geom.x - (int)c->bw, y = c->geom.y - (int)c->bw;
+		c->geom.x = c->geom.x < sgeom.x ? x : MAX(x, sgeom.x);
+		c->geom.y = c->geom.y < sgeom.y ? y : MAX(y, sgeom.y);
+	}
 
 	/* Insert this client into client lists. */
 	wl_list_insert(&clients, &c->link);
