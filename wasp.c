@@ -539,7 +539,7 @@ static void moveresizekb(const Arg *arg);
 static void outputmgrapply(struct wl_listener *listener, void *data);
 static void outputmgrapplyortest(struct wlr_output_configuration_v1 *config, int test);
 static void outputmgrtest(struct wl_listener *listener, void *data);
-static void pointerfocus(Client *c, struct wlr_surface *surface,
+static void pointerfocus(Client *c, LayerSurface *l, struct wlr_surface *surface,
 		double sx, double sy, uint32_t time);
 static void powermgrsetmode(struct wl_listener *listener, void *data);
 static void quit(const Arg *arg);
@@ -1902,10 +1902,13 @@ arrangelayers(Monitor *m)
 	for (i = 3; i >= 0; i--)
 		arrangelayer(m, &m->layers[i], &usable_area, 0);
 
-	/* Find topmost keyboard interactive layer, if such a layer exists */
+	/* Find topmost keyboard interactive layer that has indicated it wants
+	 * exclusive access to the keyboard, if such a layer exists */
 	for (i = 0; i < (int)LENGTH(layers_above_shell); i++) {
 		wl_list_for_each_reverse(l, &m->layers[layers_above_shell[i]], link) {
-			if (locked || !l->layer_surface->current.keyboard_interactive || !l->mapped)
+			if (locked ||
+					l->layer_surface->current.keyboard_interactive != ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE ||
+					!l->mapped)
 				continue;
 			/* Deactivate the focused client. */
 			focusclient(NULL, 0);
@@ -2089,6 +2092,7 @@ buttonpress(struct wl_listener *listener, void *data)
 	uint32_t mods;
 	Arg arg = {0};
 	Client *c;
+	LayerSurface *l = NULL;
 	const Button *b;
 
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
@@ -2123,10 +2127,15 @@ buttonpress(struct wl_listener *listener, void *data)
 				click = ClkTitle;
 		}
 
-		/* Change focus if the button was _pressed_ over a client */
-		xytonode(cursor->x, cursor->y, NULL, &c, NULL, NULL, NULL);
-		if (click == ClkClient && (!client_is_unmanaged(c) || client_wants_focus(c)))
+		/* Change focus if the button was _pressed_ over a client
+		   or a layer surface with on-demand keyboard interactivity */
+		xytonode(cursor->x, cursor->y, NULL, &c, &l, NULL, NULL);
+		if (click == ClkClient && (!client_is_unmanaged(c) || client_wants_focus(c))) {
 			focusclient(c, 1);
+		} else if (l && l->layer_surface->current.keyboard_interactive) {
+			focusclient(NULL, 0);
+			client_notify_enter(l->layer_surface->surface, wlr_seat_get_keyboard(seat));
+		}
 
 		keyboard = wlr_seat_get_keyboard(seat);
 		mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
@@ -2379,6 +2388,11 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 		l->layer_surface->current = old_state;
 		return;
 	}
+
+	if (l == exclusive_focus
+			&& layer_surface->current.keyboard_interactive !=
+				ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE)
+		exclusive_focus = NULL;
 
 	if (layer_surface->current.committed == 0 && l->mapped == layer_surface->surface->mapped)
 		return;
@@ -3283,7 +3297,8 @@ focusclient(Client *c, int lift)
 	if (old && (!c || client_surface(c) != old)
 			&& old_client_type == LayerShell && wlr_scene_node_coords(
 				&old_l->scene->node, &unused_lx, &unused_ly)
-			&& old_l->layer_surface->current.layer >= ZWLR_LAYER_SHELL_V1_LAYER_TOP)
+			&& old_l->layer_surface->current.layer >= ZWLR_LAYER_SHELL_V1_LAYER_TOP
+			&& old_l->layer_surface->current.keyboard_interactive == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE)
 		return;
 
 	/* Deactivate the last managed client, even when the focus is leaving
@@ -3951,20 +3966,20 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	int nx, ny;
 	double sx = 0, sy = 0, sx_confined, sy_confined;
 	Client *c = NULL, *w = NULL;
-	LayerSurface *l = NULL;
+	LayerSurface *l = NULL, *focusedl = NULL;
 	struct wlr_surface *surface = NULL;
 	struct wlr_pointer_constraint_v1 *constraint;
 
 	/* Find the client under the pointer and send the event along. */
-	xytonode(cursor->x, cursor->y, &surface, &c, NULL, &sx, &sy);
+	xytonode(cursor->x, cursor->y, &surface, &c, &l, &sx, &sy);
 
 	if (cursor_mode == CurPressed && !seat->drag
 			&& surface != seat->pointer_state.focused_surface
-			&& toplevel_from_wlr_surface(seat->pointer_state.focused_surface, &w, &l) >= 0) {
+			&& toplevel_from_wlr_surface(seat->pointer_state.focused_surface, &w, &focusedl) >= 0) {
 		c = w;
 		surface = seat->pointer_state.focused_surface;
-		sx = cursor->x - (l ? l->scene->node.x : w->geom.x);
-		sy = cursor->y - (l ? l->scene->node.y : w->geom.y);
+		sx = cursor->x - (focusedl ? focusedl->scene->node.x : w->geom.x);
+		sy = cursor->y - (focusedl ? focusedl->scene->node.y : w->geom.y);
 	}
 
 	/* time is 0 in internal calls meant to restore pointer focus. */
@@ -4031,7 +4046,7 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	if (!surface && !seat->drag)
 		wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
 
-	pointerfocus(c, surface, sx, sy, time);
+	pointerfocus(c, l, surface, sx, sy, time);
 }
 
 void
@@ -4168,14 +4183,19 @@ outputmgrtest(struct wl_listener *listener, void *data)
 }
 
 void
-pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
+pointerfocus(Client *c, LayerSurface *l, struct wlr_surface *surface, double sx, double sy,
 		uint32_t time)
 {
 	struct timespec now;
 
-	if (surface != seat->pointer_state.focused_surface &&
-			sloppyfocus && time && c && !client_is_unmanaged(c))
-		focusclient(c, 0);
+	if (surface != seat->pointer_state.focused_surface && sloppyfocus && time) {
+		if (c && (!client_is_unmanaged(c) || client_wants_focus(c))) {
+			focusclient(c, 0);
+		} else if (l && l->layer_surface->current.keyboard_interactive) {
+			focusclient(NULL, 0);
+			client_notify_enter(l->layer_surface->surface, wlr_seat_get_keyboard(seat));
+		}
+	}
 
 	/* If surface is NULL, clear pointer focus */
 	if (!surface) {
@@ -4816,7 +4836,7 @@ setup(void)
 	wl_signal_add(&xdg_shell->events.new_toplevel, &new_xdg_toplevel);
 	wl_signal_add(&xdg_shell->events.new_popup, &new_xdg_popup);
 
-	layer_shell = wlr_layer_shell_v1_create(dpy, 3);
+	layer_shell = wlr_layer_shell_v1_create(dpy, 4);
 	wl_signal_add(&layer_shell->events.new_surface, &new_layer_surface);
 
 	idle_notifier = wlr_idle_notifier_v1_create(dpy);
