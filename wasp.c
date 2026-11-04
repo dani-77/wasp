@@ -2383,6 +2383,9 @@ commitnotify(struct wl_listener *listener, void *data)
 		if (c->decoration)
 			requestdecorationmode(&c->set_decoration_mode, c->decoration);
 		wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel, 0, 0);
+		if (!c->isfloating)
+			client_set_tiled(c, WLR_EDGE_TOP | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT |
+					WLR_EDGE_RIGHT);
 		return;
 	}
 
