@@ -4863,7 +4863,7 @@ swipeend(struct wl_listener *listener, void *data)
 	const char *direction;
 	size_t gi;
 
-	if (event->cancelled)
+	if (locked || event->cancelled)
 		return;
 
 	direction = fabs(gesture_dx) > fabs(gesture_dy)
