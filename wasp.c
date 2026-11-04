@@ -5226,11 +5226,17 @@ unmapnotify(struct wl_listener *listener, void *data)
 		 * own contract (its events.destroy fires off that node going
 		 * away), so destroying capture_scene alone is enough -- no
 		 * separate call needed even if a capture_source was ever lazily
-		 * created for this client. */
+		 * created for this client. All three pointers are cleared since
+		 * the Client outlives the unmap: updatetitle() still fires while
+		 * unmapped, and a remap would otherwise hand the next capture
+		 * request the freed capture_source. */
 		if (c->ext_toplevel)
 			wlr_ext_foreign_toplevel_handle_v1_destroy(c->ext_toplevel);
 		if (c->capture_scene)
 			wlr_scene_node_destroy(&c->capture_scene->tree.node);
+		c->ext_toplevel = NULL;
+		c->capture_scene = NULL;
+		c->capture_source = NULL;
 	}
 
 	wlr_scene_node_destroy(&c->scene->node);
