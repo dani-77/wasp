@@ -606,6 +606,7 @@ static const char *pending_scratchpad_name;
 static const char *pending_scratchpad_appid;
 static int locked;
 static void *exclusive_focus;
+static Client *focused_client;
 static struct wl_display *dpy;
 static struct wl_event_loop *event_loop;
 static struct wlr_backend *backend;
@@ -3211,6 +3212,9 @@ focusclient(Client *c, int lift)
 			wlr_xdg_popup_destroy(popup);
 	}
 
+	if (old_c && old_c == exclusive_focus && client_wants_focus(old_c))
+		exclusive_focus = NULL;
+
 	/* Put the new client atop the focus stack and select its monitor */
 	if (c && !client_is_unmanaged(c)) {
 		wl_list_remove(&c->flink);
@@ -3224,23 +3228,26 @@ focusclient(Client *c, int lift)
 			client_set_border_color(c, (float[])COLOR(colors[SchemeSel][ColBorder]));
 	}
 
-	/* Deactivate old client if focus is changing */
-	if (old && (!c || client_surface(c) != old)) {
-		/* If an overlay is focused, don't focus or activate the client,
-		 * but only update its position in fstack to render its border with its color
-		 * and focus it after the overlay is closed. */
-		if (old_client_type == LayerShell && wlr_scene_node_coords(
-					&old_l->scene->node, &unused_lx, &unused_ly)
-				&& old_l->layer_surface->current.layer >= ZWLR_LAYER_SHELL_V1_LAYER_TOP) {
-			return;
-		} else if (old_c && old_c == exclusive_focus && client_wants_focus(old_c)) {
-			return;
-		/* Don't deactivate old client if the new one wants focus, as this causes issues with winecfg
-		 * and probably other clients */
-		} else if (old_c && !client_is_unmanaged(old_c) && (!c || !client_wants_focus(c))) {
-			client_set_border_color(old_c, (float[])COLOR(colors[SchemeNorm][ColBorder]));
-			client_activate_surface(old, 0);
-		}
+	/* If an overlay is focused, don't focus or activate the client,
+	 * but only update its position in fstack to render its border with its color
+	 * and focus it after the overlay is closed. */
+	if (old && (!c || client_surface(c) != old)
+			&& old_client_type == LayerShell && wlr_scene_node_coords(
+				&old_l->scene->node, &unused_lx, &unused_ly)
+			&& old_l->layer_surface->current.layer >= ZWLR_LAYER_SHELL_V1_LAYER_TOP)
+		return;
+
+	/* Deactivate the last managed client, even when the focus is leaving
+	 * an unmanaged surface (a menu) it spawned, so the client closes it.
+	 * Focusing an unmanaged client or a layer surface keeps its border
+	 * color, as in dwm and sway. */
+	if (focused_client && focused_client != c && !(c && client_is_unmanaged(c))) {
+		struct wlr_surface *s = client_surface(focused_client);
+		if (c)
+			client_set_border_color(focused_client, (float[])COLOR(colors[SchemeNorm][ColBorder]));
+		if (s && s->mapped)
+			client_activate_surface(s, 0);
+		focused_client = NULL;
 	}
 	drawbars();
 
@@ -3258,6 +3265,9 @@ focusclient(Client *c, int lift)
 
 	/* Activate the new client */
 	client_activate_surface(client_surface(c), 1);
+
+	if (!client_is_unmanaged(c))
+		focused_client = c;
 }
 
 void
@@ -5244,6 +5254,8 @@ unmapnotify(struct wl_listener *listener, void *data)
 		cursor_mode = CurNormal;
 		grabc = NULL;
 	}
+	if (c == focused_client)
+		focused_client = NULL;
 
 	if (client_is_unmanaged(c)) {
 		if (c == exclusive_focus) {
