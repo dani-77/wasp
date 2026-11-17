@@ -41,6 +41,15 @@ working:
   move/resize), and layout cycling (tile/floating/monocle/dwindle) ship in
   `examples/config.lua`; a small built-in fallback keymap keeps you from
   ever being locked out if `config.lua` is missing or broken.
+  Besides the stack-order `focusstack`/`movestack`, `focusdir`/`swapdir`
+  (`dir = "left"|"right"|"up"|"down"`) move focus to / swap with the
+  neighbouring tiled window spatially (centre past the focused one's, and
+  overlapping on the other axis), independent of layout. An entry in
+  `wasp.keys`/`wasp.gestures`/`wasp.wheel` with an unknown key, action or
+  direction is skipped with a warning on stderr (`wasp.log`) rather than
+  silently. Logic verified with a unit harness (real `wl_list`, 2x2 grid,
+  floating/hidden clients) and the config side by loading a Lua config
+  through `luaconfig.c`; not yet run live in a session.
 - **Layouts**: tile, floating, monocle (upstream dwl), plus `dwindle`
   (fibonacci/spiral tiling, adapted from [dwl-patches]).
 - **Gaps**: `wasp.gaps = { inner, outer, smart }` — inner/outer spacing

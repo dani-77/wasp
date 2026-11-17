@@ -248,6 +248,18 @@ bind({ "mod" }, "Tab",  "view") -- go back to the previously selected tags
 bind({ "mod" }, "Return", "zoom")
 bind({ "mod", "shift" }, "j", "movestack", { dir = 1 })
 bind({ "mod", "shift" }, "k", "movestack", { dir = -1 })
+-- Spatial alternatives to the stack-order binds above: move focus to, or
+-- swap places with, the tiled window next to you in that direction
+-- (needs a real neighbour -- nothing happens at an edge). Uncomment to use;
+-- mod+ctrl+hjkl and mod+ctrl+shift+hjkl are otherwise unbound.
+-- bind({ "mod", "ctrl" },          "h", "focusdir", { dir = "left" })
+-- bind({ "mod", "ctrl" },          "l", "focusdir", { dir = "right" })
+-- bind({ "mod", "ctrl" },          "k", "focusdir", { dir = "up" })
+-- bind({ "mod", "ctrl" },          "j", "focusdir", { dir = "down" })
+-- bind({ "mod", "ctrl", "shift" }, "h", "swapdir",  { dir = "left" })
+-- bind({ "mod", "ctrl", "shift" }, "l", "swapdir",  { dir = "right" })
+-- bind({ "mod", "ctrl", "shift" }, "k", "swapdir",  { dir = "up" })
+-- bind({ "mod", "ctrl", "shift" }, "j", "swapdir",  { dir = "down" })
 
 -- Scratchpad — pairs with the wasp.scratchpad slot above; uncomment both
 -- together. Backtick/grave is the common drop-down-terminal convention.

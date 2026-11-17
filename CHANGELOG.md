@@ -4,7 +4,7 @@ wasp is a fork of [dwl](https://codeberg.org/dwl/dwl), branched from its
 `main` on 2026-02-25 (after dwl 0.8). Entries from dwl are tagged with
 the upstream commit they come from.
 
-* [Unreleased](#unreleased)
+* [0.11.0](#0110)
 * [0.10.1](#0101)
 * [0.10.0](#0100)
 * [0.9.1](#091)
@@ -12,7 +12,7 @@ the upstream commit they come from.
 * [dwl history](#dwl-history)
 
 
-## Unreleased
+## 0.11.0
 
 ### Added
 

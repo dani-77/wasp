@@ -1359,3 +1359,15 @@ someone who isn't Daniel:
   further (would mean polling in ~1s slices) -- not worth the extra
   wakeups for a cosmetic tail latency on an already-declining
   responsiveness ask (see the volume-instant-refresh discussion above).
+
+## Ideas taken from vindle (2026-11-17)
+Compared against tinyopsec/vindle (a smaller dwl/swindle fork with a Lua
+config). Taken: config warnings for skipped bind entries (was silent, see
+`cfgwarn()` in `luaconfig.c`) and spatial `focusdir`/`swapdir` (vindle's
+idea, but requiring a neighbour that overlaps on the other axis so "up" at
+the top edge doesn't jump diagonally). Considered and left out: inotify
+config watcher (bound key + SIGHUP already decided, see Core), dwl-ipc +
+`smsg` (a lot of code, stdin bar model stays), double border (scenefx
+corners/gradient cover the look), drag-a-tiled-window-carrying-it-across-
+tags (possible future usability tweak). Not verified live yet: `swapdir`
+under `dwindle`, whose layout order follows `clients`.
