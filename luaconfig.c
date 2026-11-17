@@ -974,6 +974,17 @@ load_monitors(lua_State *L, int wasptbl)
 	}
 }
 
+/* Config problems are reported on stderr (-> $XDG_STATE_HOME/wasp/wasp.log
+ * under wasp-session) instead of silently dropping the entry, so a typo
+ * after a SIGHUP reload doesn't just make a binding vanish. The entry is
+ * still skipped, as before -- this only adds the message. */
+static void
+cfgwarn(const char *section, int idx, const char *what, const char *val)
+{
+	fprintf(stderr, "wasp: config: wasp.%s[%d]: %s%s%s%s, ignoring entry\n",
+			section, idx, what, val ? " '" : "", val ? val : "", val ? "'" : "");
+}
+
 /* Builds the Arg for one wasp.keys[i] entry, based on its action name.
  * Every action wasp_lookup_action() (wasp.c) knows about needs a case here
  * -- see the comment above wasp.c's actiontable for the full list. */
@@ -1020,7 +1031,8 @@ build_key_arg(lua_State *L, int e, const char *action)
 			arg.ui = 0;
 		}
 		lua_pop(L, 1);
-	} else if (!strcmp(action, "focusmon") || !strcmp(action, "tagmon")) {
+	} else if (!strcmp(action, "focusmon") || !strcmp(action, "tagmon")
+			|| !strcmp(action, "focusdir") || !strcmp(action, "swapdir")) {
 		const char *dir;
 		lua_getfield(L, e, "dir");
 		dir = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
@@ -1028,6 +1040,10 @@ build_key_arg(lua_State *L, int e, const char *action)
 			: !strcmp(dir, "up") ? WLR_DIRECTION_UP
 			: !strcmp(dir, "down") ? WLR_DIRECTION_DOWN
 			: WLR_DIRECTION_LEFT;
+		if (dir[0] && strcmp(dir, "left") && strcmp(dir, "right")
+				&& strcmp(dir, "up") && strcmp(dir, "down"))
+			fprintf(stderr, "wasp: config: %s: unknown dir '%s', using left\n",
+					action, dir);
 		lua_pop(L, 1);
 	} else if (!strcmp(action, "setlayout")) {
 		lua_getfield(L, e, "layout");
@@ -1073,8 +1089,8 @@ build_key_arg(lua_State *L, int e, const char *action)
  *                 cmd = {"alacritty"} }, ... }
  * `key` is resolved via xkb_keysym_from_name() -- anything libxkbcommon
  * recognises by name works (letters, "Return", "F1", "XF86AudioMute", ...).
- * Entries that don't parse (bad key name, unknown action) are silently
- * skipped rather than aborting the whole table -- see NOTES.md. */
+ * Entries that don't parse (bad key name, unknown action) are skipped
+ * (with a warning on stderr) rather than aborting the whole table. */
 static void
 load_keys(lua_State *L, int wasptbl)
 {
@@ -1120,6 +1136,9 @@ load_keys(lua_State *L, int wasptbl)
 		sym = lua_isstring(L, -1)
 			? xkb_keysym_from_name(lua_tostring(L, -1), XKB_KEYSYM_CASE_INSENSITIVE)
 			: XKB_KEY_NoSymbol;
+		if (sym == XKB_KEY_NoSymbol)
+			cfgwarn("keys", i, lua_isstring(L, -1) ? "unknown key" : "missing key",
+					lua_isstring(L, -1) ? lua_tostring(L, -1) : NULL);
 		lua_pop(L, 1); /* key */
 		if (sym == XKB_KEY_NoSymbol) {
 			lua_pop(L, 1); /* entry table */
@@ -1129,6 +1148,8 @@ load_keys(lua_State *L, int wasptbl)
 		lua_getfield(L, e, "action");
 		action = lua_isstring(L, -1) ? lua_tostring(L, -1) : NULL;
 		fn = action ? wasp_lookup_action(action) : NULL;
+		if (!fn)
+			cfgwarn("keys", i, action ? "unknown action" : "missing action", action);
 		lua_pop(L, 1); /* action */
 		if (!fn) {
 			lua_pop(L, 1); /* entry table */
@@ -1205,6 +1226,8 @@ load_gestures(lua_State *L, int wasptbl)
 		lua_getfield(L, e, "action");
 		action = lua_isstring(L, -1) ? lua_tostring(L, -1) : NULL;
 		fn = action ? wasp_lookup_action(action) : NULL;
+		if (!fn)
+			cfgwarn("gestures", i, action ? "unknown action" : "missing action", action);
 		lua_pop(L, 1); /* action */
 		if (!fn) {
 			lua_pop(L, 1); /* entry table */
@@ -1220,6 +1243,8 @@ load_gestures(lua_State *L, int wasptbl)
 				break;
 			}
 		}
+		if (!buf[count].direction)
+			cfgwarn("gestures", i, "bad direction", dirstr);
 		lua_pop(L, 1); /* direction */
 		if (!buf[count].direction) {
 			lua_pop(L, 1); /* entry table */
@@ -1299,6 +1324,10 @@ load_wheel(lua_State *L, int wasptbl)
 				break;
 		lua_pop(L, 1); /* direction */
 
+		if (!fn)
+			cfgwarn("wheel", i, action ? "unknown action" : "missing action", action);
+		else if (!dirstr || di == 4)
+			cfgwarn("wheel", i, "bad direction", dirstr);
 		if (!fn || !dirstr || di == 4) {
 			lua_pop(L, 1); /* entry table */
 			continue;

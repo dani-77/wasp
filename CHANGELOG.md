@@ -4,11 +4,26 @@ wasp is a fork of [dwl](https://codeberg.org/dwl/dwl), branched from its
 `main` on 2026-02-25 (after dwl 0.8). Entries from dwl are tagged with
 the upstream commit they come from.
 
+* [Unreleased](#unreleased)
 * [0.10.1](#0101)
 * [0.10.0](#0100)
 * [0.9.1](#091)
 * [0.9.0](#090)
 * [dwl history](#dwl-history)
+
+
+## Unreleased
+
+### Added
+
+* `focusdir` and `swapdir` actions (`dir = "left"|"right"|"up"|"down"`):
+  move focus to / swap places with the tiled window next to the focused
+  one in that direction, regardless of layout or stacking order. Idea
+  from vindle.
+* Config warnings: an entry in `wasp.keys`, `wasp.gestures` or
+  `wasp.wheel` with an unknown key, action or direction is still skipped
+  but now says so on stderr (so in `wasp.log`) instead of silently
+  vanishing, e.g. after a SIGHUP reload.
 
 
 ## 0.10.1

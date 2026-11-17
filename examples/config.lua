@@ -192,6 +192,8 @@ wasp.rules = {
 --   spawn-menu        (none)               run wasp.menu
 --   focusstack        dir = 1 | -1          next/prev window in stack
 --   movestack         dir = 1 | -1          swap focused window with next/prev
+--   focusdir          dir = "left"|"right"|"up"|"down"   focus the neighbouring tiled window
+--   swapdir           dir = (same)          swap places with that neighbour
 --   zoom              (none)                swap focused window into/out of master
 --   incnmaster        dir = 1 | -1          grow/shrink master area's window count
 --   setmfact          delta = <float>       grow/shrink master area's size

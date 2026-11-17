@@ -513,6 +513,8 @@ static void extworkspacecommit(struct wl_listener *listener, void *data);
 static void focusclient(Client *c, int lift);
 static void focusmon(const Arg *arg);
 static void focusstack(const Arg *arg);
+static void focusdir(const Arg *arg);
+static void swapdir(const Arg *arg);
 static Client *focustop(Monitor *m);
 static void fullscreennotify(struct wl_listener *listener, void *data);
 static void gpureset(struct wl_listener *listener, void *data);
@@ -783,6 +785,8 @@ static const struct { const char *name; ActionFn fn; } actiontable[] = {
 	{ "spawn-terminal",   spawn },
 	{ "spawn-menu",       spawn },
 	{ "focusstack",       focusstack },
+	{ "focusdir",         focusdir },
+	{ "swapdir",          swapdir },
 	{ "movestack",        movestack },
 	{ "incnmaster",       incnmaster },
 	{ "setmfact",         setmfact },
@@ -3954,6 +3958,86 @@ movestack(const Arg *arg)
 
 	wl_list_remove(&sel->link);
 	wl_list_insert(&c->link, &sel->link);
+	arrange(selmon);
+}
+
+/* Nearest visible, tiled client of selmon in direction `dir`
+ * (WLR_DIRECTION_*) of sel -- spatial, so independent of tiling order and
+ * layout. A candidate must have its centre strictly past sel's centre in
+ * that direction AND its extent must overlap sel's on the other axis (a
+ * real neighbour, not a diagonal one -- so pressing "up" at the top edge
+ * does nothing instead of jumping sideways). Closest by squared centre
+ * distance wins. NULL if nothing fits. */
+static Client *
+dirclient(Client *sel, int dir)
+{
+	Client *c, *best = NULL;
+	int sx = sel->geom.x + sel->geom.width / 2;
+	int sy = sel->geom.y + sel->geom.height / 2;
+	double d, bestd = 0;
+
+	wl_list_for_each(c, &clients, link) {
+		int cx, cy, overlap;
+		if (c == sel || !VISIBLEON(c, selmon) || c->isfloating)
+			continue;
+		cx = c->geom.x + c->geom.width / 2;
+		cy = c->geom.y + c->geom.height / 2;
+		switch (dir) {
+		case WLR_DIRECTION_LEFT:  if (cx >= sx) continue; break;
+		case WLR_DIRECTION_RIGHT: if (cx <= sx) continue; break;
+		case WLR_DIRECTION_UP:    if (cy >= sy) continue; break;
+		case WLR_DIRECTION_DOWN:  if (cy <= sy) continue; break;
+		default: return NULL;
+		}
+		if (dir == WLR_DIRECTION_LEFT || dir == WLR_DIRECTION_RIGHT)
+			overlap = c->geom.y < sel->geom.y + sel->geom.height
+					&& sel->geom.y < c->geom.y + c->geom.height;
+		else
+			overlap = c->geom.x < sel->geom.x + sel->geom.width
+					&& sel->geom.x < c->geom.x + c->geom.width;
+		if (!overlap)
+			continue;
+		d = (double)(cx - sx) * (cx - sx) + (double)(cy - sy) * (cy - sy);
+		if (!best || d < bestd) {
+			best = c;
+			bestd = d;
+		}
+	}
+	return best;
+}
+
+void
+focusdir(const Arg *arg)
+{
+	/* Spatial focus: arg->i is WLR_DIRECTION_LEFT/RIGHT/UP/DOWN.
+	 * Idea borrowed from vindle (tinyopsec/vindle). */
+	Client *sel = focustop(selmon), *c;
+	if (!sel || sel->isfloating || (sel->isfullscreen && !client_has_children(sel)))
+		return;
+	if ((c = dirclient(sel, arg->i)))
+		focusclient(c, 1);
+}
+
+void
+swapdir(const Arg *arg)
+{
+	/* Like focusdir(), but swaps the focused client's place in the
+	 * tiling order (`clients`) with the neighbour found, so the layout
+	 * re-flows them into each other's slots. Focus stays on the
+	 * moved window. */
+	Client *sel = focustop(selmon), *c;
+	struct wl_list mark;
+	if (!sel || sel->isfloating || sel->isfullscreen)
+		return;
+	if (!(c = dirclient(sel, arg->i)))
+		return;
+	/* `mark` holds c's slot while c takes sel's, then sel takes the mark */
+	wl_list_insert(c->link.prev, &mark);
+	wl_list_remove(&c->link);
+	wl_list_insert(sel->link.prev, &c->link);
+	wl_list_remove(&sel->link);
+	wl_list_insert(&mark, &sel->link);
+	wl_list_remove(&mark);
 	arrange(selmon);
 }
 
