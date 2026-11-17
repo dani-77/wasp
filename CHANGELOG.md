@@ -23,7 +23,9 @@ the upstream commit they come from.
 * Config warnings: an entry in `wasp.keys`, `wasp.gestures` or
   `wasp.wheel` with an unknown key, action or direction is still skipped
   but now says so on stderr (so in `wasp.log`) instead of silently
-  vanishing, e.g. after a SIGHUP reload.
+  vanishing, e.g. after a SIGHUP reload. The warnings of one load are also
+  sent as a single `notify-send` desktop notification (best effort: needs
+  `notify-send` and a notification daemon).
 
 
 ## 0.10.1

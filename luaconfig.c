@@ -978,11 +978,44 @@ load_monitors(lua_State *L, int wasptbl)
  * under wasp-session) instead of silently dropping the entry, so a typo
  * after a SIGHUP reload doesn't just make a binding vanish. The entry is
  * still skipped, as before -- this only adds the message. */
+static char warnbuf[1024];
+static size_t warnlen;
+
 static void
 cfgwarn(const char *section, int idx, const char *what, const char *val)
 {
-	fprintf(stderr, "wasp: config: wasp.%s[%d]: %s%s%s%s, ignoring entry\n",
+	char line[256];
+	int n;
+
+	n = snprintf(line, sizeof line, "wasp.%s[%d]: %s%s%s%s, ignoring entry",
 			section, idx, what, val ? " '" : "", val ? val : "", val ? "'" : "");
+	fprintf(stderr, "wasp: config: %s\n", line);
+
+	/* Also queued for one desktop notification at the end of the load. */
+	if (n > 0 && warnlen + (size_t)n + 2 < sizeof warnbuf)
+		warnlen += snprintf(warnbuf + warnlen, sizeof warnbuf - warnlen,
+				"%s%s", warnlen ? "\n" : "", line);
+}
+
+/* Sends everything cfgwarn() collected as a single notify-send. Best effort:
+ * a missing notify-send or notification daemon just leaves the stderr
+ * lines. The child is reaped by handlesig()'s SIGCHLD loop in wasp.c. */
+static void
+flush_cfgwarnings(void)
+{
+	pid_t pid;
+
+	if (!warnlen)
+		return;
+	pid = fork();
+	if (pid == 0) {
+		setsid();
+		execlp("notify-send", "notify-send", "-u", "critical",
+				"-a", "wasp", "wasp: config warnings", warnbuf, (char *)NULL);
+		_exit(127);
+	}
+	warnlen = 0;
+	warnbuf[0] = '\0';
 }
 
 /* Builds the Arg for one wasp.keys[i] entry, based on its action name.
@@ -1365,6 +1398,9 @@ waspconfig_load(void)
 	path = config_path();
 	if (luaL_dofile(L, path) != LUA_OK) {
 		fprintf(stderr, "wasp: %s: %s\n", path, lua_tostring(L, -1));
+		snprintf(warnbuf, sizeof warnbuf, "%s", lua_tostring(L, -1));
+		warnlen = strlen(warnbuf);
+		flush_cfgwarnings();
 		lua_close(L);
 		return; /* keep the defaults set_defaults() already put in place */
 	}
@@ -1393,4 +1429,5 @@ waspconfig_load(void)
 	lua_pop(L, 1); /* the wasp global (or whatever lua_getglobal pushed) */
 
 	lua_close(L);
+	flush_cfgwarnings();
 }
