@@ -1387,23 +1387,46 @@ load_wheel(lua_State *L, int wasptbl)
 void
 waspconfig_load(void)
 {
+	/* Set once a config.lua has been read successfully. From then on, a
+	 * broken file on reload keeps the config already in effect instead of
+	 * dropping the user back to the defaults (and their keybindings) in
+	 * the middle of a session. */
+	static int have_config = 0;
 	lua_State *L;
 	const char *path;
-
-	set_defaults();
+	int status;
 
 	L = luaL_newstate();
 	luaL_openlibs(L);
 
+	/* Run the file before touching any setting: config.lua only builds
+	 * the `wasp` table (no C functions are exposed to it), so nothing
+	 * changes until the load_*() calls below read it. */
 	path = config_path();
-	if (luaL_dofile(L, path) != LUA_OK) {
-		fprintf(stderr, "wasp: %s: %s\n", path, lua_tostring(L, -1));
-		snprintf(warnbuf, sizeof warnbuf, "%s", lua_tostring(L, -1));
+	status = luaL_loadfile(L, path);
+	if (status == LUA_OK)
+		status = lua_pcall(L, 0, LUA_MULTRET, 0);
+	if (status != LUA_OK) {
+		/* A missing/unreadable file is a deliberate "use the defaults";
+		 * a syntax or runtime error is a mistake mid-edit. */
+		int keep = have_config && status != LUA_ERRFILE;
+
+		fprintf(stderr, "wasp: %s: %s%s\n", path, lua_tostring(L, -1),
+				keep ? " (keeping the previous config)" : "");
+		snprintf(warnbuf, sizeof warnbuf, "%s%s", lua_tostring(L, -1),
+				keep ? "\nKeeping the previous config." : "");
 		warnlen = strlen(warnbuf);
 		flush_cfgwarnings();
 		lua_close(L);
-		return; /* keep the defaults set_defaults() already put in place */
+		if (!keep) {
+			set_defaults();
+			have_config = 0;
+		}
+		return;
 	}
+
+	set_defaults();
+	have_config = 1;
 
 	lua_getglobal(L, "wasp");
 	if (lua_istable(L, -1)) {

@@ -4,12 +4,25 @@ wasp is a fork of [dwl](https://codeberg.org/dwl/dwl), branched from its
 `main` on 2026-02-25 (after dwl 0.8). Entries from dwl are tagged with
 the upstream commit they come from.
 
+* [Unreleased](#unreleased)
 * [0.11.0](#0110)
 * [0.10.1](#0101)
 * [0.10.0](#0100)
 * [0.9.1](#091)
 * [0.9.0](#090)
 * [dwl history](#dwl-history)
+
+
+## Unreleased
+
+### Fixed
+
+* Reloading a `config.lua` with a syntax or runtime error (the `reload`
+  action or SIGHUP) no longer drops the session back to the built-in
+  defaults, keybindings included: the config already in effect stays,
+  and the error is logged and sent as a notification ending in
+  "Keeping the previous config." A missing config file still means the
+  defaults, as does a broken file at startup.
 
 
 ## 0.11.0
