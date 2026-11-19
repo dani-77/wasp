@@ -589,6 +589,11 @@ static void unmapnotify(struct wl_listener *listener, void *data);
 static void updatemons(struct wl_listener *listener, void *data);
 static void updatebar(Monitor *m);
 static void updateextworkspaces(Monitor *m);
+static void publishworkspaces(void);
+static void workspacesfilepath(char *path, size_t size);
+/* Set by cleanup(): destroying the clients there redraws the bars, which
+ * would otherwise write publishworkspaces()'s file again once removed. */
+static int workspaces_unpublished;
 static void updatetitle(struct wl_listener *listener, void *data);
 static void urgent(struct wl_listener *listener, void *data);
 static void view(const Arg *arg);
@@ -2209,6 +2214,13 @@ void
 cleanup(void)
 {
 	char **name;
+	char workspaces[PATH_MAX];
+
+	/* wasp: bars must not read a stale publishworkspaces() file. */
+	workspaces_unpublished = 1;
+	workspacesfilepath(workspaces, sizeof(workspaces));
+	if (workspaces[0])
+		unlink(workspaces);
 
 	cleanuplisteners();
 #ifdef XWAYLAND
@@ -3194,6 +3206,70 @@ drawbars(void)
 		updateextworkspaces(m);
 		drawbar(m);
 	}
+	publishworkspaces();
+}
+
+/* wasp: ext-workspace-v1 has no "occupied" state, so the d77 compositors
+ * (wasp, whiplash, spitfire) publish window counts for the d77 shells
+ * (Utumno, quickshell-d77, fabric-d77, helium-d77) the same way: the file
+ * from workspacesfilepath(), one line per workspace, "<ext-workspace id>
+ * <window count>". Ids are the ones createmon() gives the ext-workspace
+ * handles ("<output>-<tag>"). Clients on several tags count on each; the
+ * scratchpad tag (SPTAG) is not a workspace and is left out. drawbars()
+ * runs often, so the file is only rewritten when it changes, beside the
+ * real one and renamed into place so readers never see half of it. */
+static void
+workspacesfilepath(char *path, size_t size)
+{
+	const char *dir = getenv("XDG_RUNTIME_DIR");
+	const char *display = getenv("WAYLAND_DISPLAY");
+
+	path[0] = '\0';
+	if (dir && *dir && display && *display)
+		snprintf(path, size, "%s/d77-workspaces-%s", dir, display);
+}
+
+void
+publishworkspaces(void)
+{
+	static char last[4096];
+	char body[4096], path[PATH_MAX], tmp[PATH_MAX + 8];
+	size_t len = 0;
+	unsigned int i, count;
+	Monitor *m;
+	Client *c;
+	FILE *f;
+
+	if (!ext_workspace_mgr || workspaces_unpublished)
+		return;
+	workspacesfilepath(path, sizeof(path));
+	if (!path[0])
+		return;
+
+	body[0] = '\0';
+	wl_list_for_each(m, &mons, link) {
+		if (!m->ext_workspaces)
+			continue;
+		for (i = 0; i < LENGTH(tags); i++) {
+			count = 0;
+			wl_list_for_each(c, &clients, link)
+				if (c->mon == m && (c->tags & (1u << i)))
+					count++;
+			len += (size_t)snprintf(body + len, sizeof(body) - len, "%s-%u %u\n",
+					m->wlr_output->name, i + 1, count);
+			if (len >= sizeof(body))
+				return; /* more outputs than any real setup */
+		}
+	}
+	if (strcmp(body, last) == 0)
+		return;
+
+	snprintf(tmp, sizeof(tmp), "%s.new", path);
+	if (!(f = fopen(tmp, "w")))
+		return;
+	fputs(body, f);
+	if (fclose(f) == 0 && rename(tmp, path) == 0)
+		memcpy(last, body, len + 1);
 }
 
 /* wasp: keeps ext-workspace-v1 state in sync with this monitor's tags --

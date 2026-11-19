@@ -92,6 +92,16 @@ working:
   can switch tags, something dwl had no story for at all before this.
   Verified end-to-end with a standalone protocol client, not just by
   inspection.
+- **Occupied tags for the d77 shells**: ext-workspace-v1 has no
+  "occupied" state, so wasp (like whiplash and spitfire) keeps
+  `$XDG_RUNTIME_DIR/d77-workspaces-$WAYLAND_DISPLAY`, one line per
+  workspace, `<ext-workspace id> <window count>`, with the ids
+  `createmon()` gives the handles (`<output>-<tag>`). Utumno,
+  quickshell-d77, fabric-d77 and helium-d77 read it to dim empty tags.
+  `publishworkspaces()` rewrites it from `drawbars()` only when it
+  changes (written beside it and renamed); the scratchpad tag is not
+  counted; `cleanup()` removes it and stops further writes, since
+  destroying the clients there redraws the bars.
 - **Per-output rules and live scale**: `wasp.monitors = { { name=,
   mfact=, nmaster=, scale=, layout=, transform=, x=, y= }, ... }` — same
   idea as `wasp.rules`, but for outputs instead of clients (a monitor
