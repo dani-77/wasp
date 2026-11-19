@@ -4,7 +4,7 @@ wasp is a fork of [dwl](https://codeberg.org/dwl/dwl), branched from its
 `main` on 2026-02-25 (after dwl 0.8). Entries from dwl are tagged with
 the upstream commit they come from.
 
-* [Unreleased](#unreleased)
+* [0.12.0](#0120)
 * [0.11.0](#0110)
 * [0.10.1](#0101)
 * [0.10.0](#0100)
@@ -13,7 +13,15 @@ the upstream commit they come from.
 * [dwl history](#dwl-history)
 
 
-## Unreleased
+## 0.12.0
+
+### Added
+
+* Occupied tags for the d77 shells (Utumno, quickshell-d77, fabric-d77,
+  helium-d77): ext-workspace-v1 has no "occupied" state, so wasp, like
+  whiplash and spitfire, keeps
+  `$XDG_RUNTIME_DIR/d77-workspaces-$WAYLAND_DISPLAY` with each tag's
+  window count, which the shells read to dim empty tags.
 
 ### Fixed
 
