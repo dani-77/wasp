@@ -2419,6 +2419,15 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 				ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE)
 		exclusive_focus = NULL;
 
+	/* A mapped layer that stops asking for the keyboard (a panel kept mapped
+	 * and hidden by switching to none, like helium-d77's launcher and session
+	 * menu) gives it back to the focused client, as unmapping does; otherwise
+	 * keys would keep going to the hidden panel. */
+	if (layer_surface->current.keyboard_interactive ==
+				ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE
+			&& layer_surface->surface == seat->keyboard_state.focused_surface)
+		focusclient(focustop(selmon), 1);
+
 	if (layer_surface->current.committed == 0 && l->mapped == layer_surface->surface->mapped)
 		return;
 	l->mapped = layer_surface->surface->mapped;
