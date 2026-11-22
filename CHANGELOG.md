@@ -4,6 +4,7 @@ wasp is a fork of [dwl](https://codeberg.org/dwl/dwl), branched from its
 `main` on 2026-02-25 (after dwl 0.8). Entries from dwl are tagged with
 the upstream commit they come from.
 
+* [0.12.1](#0121)
 * [0.12.0](#0120)
 * [0.11.0](#0110)
 * [0.10.1](#0101)
@@ -11,6 +12,16 @@ the upstream commit they come from.
 * [0.9.1](#091)
 * [0.9.0](#090)
 * [dwl history](#dwl-history)
+
+
+## 0.12.1
+
+### Fixed
+
+* A layer surface that switches its keyboard interactivity to none while
+  mapped gives the keyboard back to the focused client, as unmapping one
+  does. helium-d77 keeps its launcher and session menu mapped and hides
+  them that way, so keys kept going to the hidden panel.
 
 
 ## 0.12.0
