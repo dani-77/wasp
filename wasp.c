@@ -1860,13 +1860,21 @@ arrange(Monitor *m)
 	 * (via anim.tag_hide_after) and reverses smoothly instead of popping. */
 	wl_list_for_each(c, &clients, link) {
 		int vis;
+		bool fullscreen_layer;
 
 		if (c->mon != m)
 			continue;
 		vis = VISIBLEON(c, m);
-		if (!animations_enable || !animdur_tag) {
+		fullscreen_layer = c->scene->node.parent == layers[LyrFS];
+		if (!animations_enable || !animdur_tag || fullscreen_layer) {
 			wlr_scene_node_set_enabled(&c->scene->node, vis);
 			client_set_suspended(c, !vis);
+			/* Fullscreen windows and their dialogs must remain on their
+			 * own output when a tag switch changes visibility. */
+			if (fullscreen_layer && c->anim.action == AnimTag) {
+				c->anim = (struct wasp_animation){ .current = c->geom };
+				apply_client_geom(c, c->geom);
+			}
 			/* wasp: no animation tween will ever tick apply_client_geom()
 			 * for this client to refresh its shield, so do it here
 			 * directly -- NOTES.md item 9. */

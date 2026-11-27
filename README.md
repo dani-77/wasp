@@ -78,7 +78,8 @@ config also binds a four-finger upward swipe. Use Up/Down or scroll to
 browse tags, Enter or click to switch, and Escape to cancel.
 Drag a window onto a neighbouring card to move it there. The overview
 stays open after the move so you can keep browsing or press Enter to follow
-the window. Fullscreen windows stay on their current tag.
+the window. Fullscreen windows stay on their current tag and reappear in
+fullscreen when you return to it.
 
 Existing configs can add the key and gesture to their respective tables.
 

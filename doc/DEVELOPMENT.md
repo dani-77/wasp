@@ -193,6 +193,9 @@ tracks a preview tag on the selected output. Enter and click call the
 normal tag activation path. Dropping a window replaces its source tag
 bit and keeps any other tags assigned to that window. Hidden scratchpads
 stay off the cards, and fullscreen windows keep their original tag.
+Switching tags changes fullscreen-layer visibility immediately, including
+dialogs on that layer. Fullscreen and floating geometry stay with the
+client when its tag is hidden.
 
 SceneFX draws the cards within the output's logical usable area, leaving
 reserved panel space available. The active tag uses regular window
@@ -215,7 +218,9 @@ buffers, including during output capture.
 Headless SceneFX checks covered Wayland and XWayland client previews.
 Keyboard and pointer tests covered cancellation, activation, scrolling,
 cross-tag drops, fullscreen and floating geometry, capture shielding, and
-session lock. The compositor also builds without XWayland.
+session lock. A two-output headless run verified that the overview and
+fullscreen transitions stay on their own output. The compositor also
+builds without XWayland.
 
 ## Building
 
