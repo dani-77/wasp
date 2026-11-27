@@ -22,7 +22,9 @@ fullscreen layer changes visibility immediately on a tag switch, keeping
 its saved geometry and preventing the tag slide from crossing outputs.
 The separate Wasp Overview session worked in the hardware test. The
 example Lua config shows the key and swipe bindings in their respective
-sections.
+sections. An active drag shows a thumbnail beside the pointer and marks
+the destination card. Releasing the button, closing the source window,
+or dismissing the overview removes the thumbnail.
 
 ## Up next (2026-08-12, Daniel's stated order) -- ALL DONE (2026-08-15)
 Three things, in this order (2026-08-14: #2 and #3 done). #7 (scenefx

@@ -207,7 +207,11 @@ including subsurfaces, and clips each thumbnail to its card and output.
 It preserves buffer transforms, source cropping, rounded corners and
 surface opacity. Explicitly synchronized buffers carry their acquire
 fences into the preview, whose render samples register release fences.
-The previews contain managed toplevels and their subsurfaces.
+The previews contain managed toplevels and their subsurfaces. Once a drag
+starts, a separate thumbnail follows the pointer within the output's usable
+area. It uses the same buffer and shielding rules as the cards. Pointer
+motion moves its SceneFX subtree and recolors the destination outline. Drop
+hit testing still uses the cards beneath the thumbnail.
 
 Rendering and hit testing share the same scene nodes. Browsing leaves
 tag visibility and workspace protocol state alone. The overview consumes
@@ -219,7 +223,8 @@ buffers, including during output capture.
 Headless SceneFX checks covered Wayland and XWayland client previews.
 Keyboard and pointer tests covered cancellation, activation, scrolling,
 cross-tag drops, fullscreen and floating geometry, capture shielding, and
-session lock. A two-output headless run verified that the overview and
+session lock. Screenshots taken mid-drag verified that the thumbnail moved
+with the pointer and the target card remained highlighted. A two-output headless run verified that the overview and
 fullscreen transitions stay on their own output. The compositor also
 builds without XWayland.
 

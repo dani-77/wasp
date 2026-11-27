@@ -635,19 +635,21 @@ static void *exclusive_focus;
 static Client *focused_client;
 struct OverviewCard {
 	struct wlr_scene_tree *tree;
+	struct wlr_scene_rect *outline;
 	struct wlr_box box;
 	int tag;
 };
 static struct {
 	Monitor *mon;
-	struct wlr_scene_tree *tree;
+	struct wlr_scene_tree *tree, *drag_preview;
+	struct wlr_box drag_bounds;
 	struct OverviewCard cards[3];
 	size_t card_count;
-	int selected, press_tag, hover;
+	int selected, press_tag;
 	Client *pressed;
 	double press_x, press_y, scroll;
-	bool dirty, buttons[KEY_MAX + 1];
-} overview = { .press_tag = -1, .hover = -1 };
+	bool dirty, dragging, buttons[KEY_MAX + 1];
+} overview = { .press_tag = -1 };
 static struct wl_display *dpy;
 static struct wl_event_loop *event_loop;
 static struct wlr_backend *backend;
@@ -4645,13 +4647,23 @@ overview_damage(Monitor *m)
 }
 
 static void
+overview_clear_press(void)
+{
+	overview.pressed = NULL;
+	overview.press_tag = -1;
+	overview.dragging = false;
+	if (overview.drag_preview)
+		wlr_scene_node_destroy(&overview.drag_preview->node);
+	overview.drag_preview = NULL;
+}
+
+static void
 overview_dismiss(void)
 {
 	if (!overview.mon)
 		return;
 	overview.mon = NULL;
-	overview.pressed = NULL;
-	overview.press_tag = overview.hover = -1;
+	overview_clear_press();
 	overview.scroll = 0;
 	if (overview.tree)
 		wlr_scene_node_destroy(&overview.tree->node);
@@ -4843,10 +4855,9 @@ overview_place(Client *c, struct wlr_box box, void *data)
 }
 
 static void
-overview_window(struct wlr_scene_tree *tree, Client *c, Monitor *m,
-		struct wlr_box card, struct wlr_box clip)
+overview_window(struct wlr_scene_tree *tree, Client *c, struct wlr_box box,
+		struct wlr_box clip, double scale)
 {
-	struct wlr_box box = overview_project(c->overview_box, m->m, card);
 	struct wlr_box visible, inner;
 	struct OverviewPreview preview;
 	struct wlr_scene_rect *border;
@@ -4856,8 +4867,8 @@ overview_window(struct wlr_scene_tree *tree, Client *c, Monitor *m,
 		return;
 	preview.tree = wlr_scene_tree_create(tree);
 	preview.tree->node.data = c;
-	bw = c->bw ? MAX(1, (int)lround((double)c->bw * card.width / m->m.width)) : 0;
-	radius = c->isfullscreen ? 0 : (int)lround((double)border_radius * card.width / m->m.width);
+	bw = c->bw ? MAX(1, (int)lround(c->bw * scale)) : 0;
+	radius = c->isfullscreen ? 0 : (int)lround(border_radius * scale);
 	inner = (struct wlr_box){box.x + bw, box.y + bw, box.width - 2 * bw, box.height - 2 * bw};
 
 	border = overview_rect(preview.tree, &visible,
@@ -4895,9 +4906,10 @@ overview_card(struct OverviewCard *card, Monitor *m, int index, struct wlr_box b
 
 	card->tag = index;
 	card->tree = wlr_scene_tree_create(overview.tree);
+	card->outline = NULL;
 	if (wlr_box_intersection(&visible, &outline, &m->w))
-		overview_rect(card->tree, &visible, (float[])COLOR(colors[
-				index == overview.selected || index == overview.hover ? SchemeSel : SchemeNorm][ColBorder]));
+		card->outline = overview_rect(card->tree, &visible, (float[])COLOR(colors[
+				index == overview.selected ? SchemeSel : SchemeNorm][ColBorder]));
 	if (!wlr_box_intersection(&card->box, &box, &m->w))
 		return;
 	overview_rect(card->tree, &card->box, (float[]){0.06f, 0.07f, 0.09f, 1.0f});
@@ -4921,7 +4933,8 @@ overview_card(struct OverviewCard *card, Monitor *m, int index, struct wlr_box b
 				continue;
 			if (fullscreen && c != fullscreen && client_get_parent(c) != fullscreen)
 				continue;
-			overview_window(card->tree, c, m, box, card->box);
+			overview_window(card->tree, c, overview_project(c->overview_box, m->m, box),
+					card->box, (double)box.width / m->m.width);
 		}
 	}
 }
@@ -4942,6 +4955,7 @@ overview_refresh(void)
 		return;
 	}
 	overview.dirty = false;
+	overview.drag_preview = NULL; /* destroyed with old_tree */
 	overview.tree = wlr_scene_tree_create(layers[LyrOverview]);
 	wlr_scene_node_set_enabled(&overview.tree->node, false);
 	overview_rect(overview.tree, &m->w,
@@ -4957,6 +4971,7 @@ overview_refresh(void)
 		box.y = m->w.y + (m->w.height - box.height) / 2 + (index - overview.selected) * spacing;
 		overview_card(&overview.cards[overview.card_count++], m, index, box);
 	}
+	overview_motion();
 	if (old_tree)
 		wlr_scene_node_destroy(&old_tree->node);
 	wlr_scene_node_set_enabled(&overview.tree->node, true);
@@ -4972,23 +4987,77 @@ overview_card_at_pointer(void)
 	return NULL;
 }
 
-static bool
-overview_dragging(void)
+static void
+overview_update_drag_preview(Client *c)
 {
-	double dx = cursor->x - overview.press_x, dy = cursor->y - overview.press_y;
-	return dx * dx + dy * dy >= 64;
+	const struct wlr_box *area = &overview.mon->w;
+	struct wlr_box *bounds = &overview.drag_bounds;
+	bool visible = c && wlr_box_contains_point(&overview.mon->m, cursor->x, cursor->y)
+			&& area->width >= 5 && area->height >= 5;
+	int x, y;
+
+	if (!visible) {
+		if (overview.drag_preview) {
+			wlr_scene_node_destroy(&overview.drag_preview->node);
+			overview.drag_preview = NULL;
+		}
+		return;
+	}
+
+	if (!overview.drag_preview) {
+		double scale = MIN(0.35, MIN((double)(area->width / 3) / c->geom.width,
+				(double)(area->height / 3) / c->geom.height));
+		struct wlr_box window = { 2, 2,
+			MAX(1, (int)lround(c->geom.width * scale)),
+			MAX(1, (int)lround(c->geom.height * scale)) };
+
+		overview.drag_preview = wlr_scene_tree_create(overview.tree);
+		wlr_scene_node_set_enabled(&overview.drag_preview->node, false);
+		*bounds = (struct wlr_box){ 0, 0, window.width + 4, window.height + 4 };
+		overview_rect(overview.drag_preview, bounds, (float[])COLOR(colors[SchemeSel][ColBorder]));
+		overview_window(overview.drag_preview, c, window, window, scale);
+	}
+
+	/* Keep the pointer and the destination outline visible. Flip the
+	 * preview to the other side of the pointer near the output edges. */
+	x = (int)cursor->x + 14;
+	y = (int)cursor->y + 18;
+	if (x + bounds->width > area->x + area->width)
+		x = (int)cursor->x - bounds->width - 14;
+	if (y + bounds->height > area->y + area->height)
+		y = (int)cursor->y - bounds->height - 18;
+	x = MAX(area->x, MIN(x, area->x + area->width - bounds->width));
+	y = MAX(area->y, MIN(y, area->y + area->height - bounds->height));
+	wlr_scene_node_set_position(&overview.drag_preview->node, x, y);
+	wlr_scene_node_set_enabled(&overview.drag_preview->node, true);
 }
 
 static void
 overview_motion(void)
 {
-	struct OverviewCard *card = overview.tree ? overview_card_at_pointer() : NULL;
-	int hover = overview.pressed && !overview.pressed->isfullscreen && overview_dragging()
-		&& card && card->tag != overview.press_tag ? card->tag : -1;
-	if (hover != overview.hover) {
-		overview.hover = hover;
-		overview_damage(overview.mon);
+	struct OverviewCard *target = NULL;
+	Client *c = overview.pressed;
+	double dx = cursor->x - overview.press_x, dy = cursor->y - overview.press_y;
+	size_t i;
+
+	if (!overview.tree)
+		return;
+	if (overview.press_tag >= 0 && dx * dx + dy * dy >= 64)
+		overview.dragging = true;
+	if (c && (!overview.dragging || c->isfullscreen || c->mon != overview.mon
+			|| !(c->tags & (1u << overview.press_tag))))
+		c = NULL;
+	if (c && (target = overview_card_at_pointer()) && target->tag == overview.press_tag)
+		target = NULL;
+
+	for (i = 0; i < overview.card_count; i++) {
+		struct OverviewCard *card = &overview.cards[i];
+		int scheme = card == target || card->tag == overview.selected ? SchemeSel : SchemeNorm;
+		int column = card == target ? ColFg : ColBorder;
+		if (card->outline)
+			wlr_scene_rect_set_color(card->outline, (float[])COLOR(colors[scheme][column]));
 	}
+	overview_update_drag_preview(c);
 }
 
 static void
@@ -4998,7 +5067,6 @@ overview_select(int index)
 	if (index == overview.selected)
 		return;
 	overview.selected = index;
-	overview.hover = -1;
 	overview_damage(overview.mon);
 }
 
@@ -5046,7 +5114,8 @@ overview_button(uint32_t button, bool pressed)
 	struct OverviewCard *card;
 	struct wlr_scene_node *node;
 	Client *c;
-	bool tracked = button <= KEY_MAX && overview.buttons[button];
+	int source_tag;
+	bool dragging, tracked = button <= KEY_MAX && overview.buttons[button];
 
 	/* The release of a button pressed here belongs to the overview even
 	 * if it has already closed or the session locked in the meantime. */
@@ -5064,7 +5133,7 @@ overview_button(uint32_t button, bool pressed)
 		return true;
 	card = overview_card_at_pointer();
 	if (pressed) {
-		overview.pressed = NULL;
+		overview_clear_press();
 		overview.press_tag = card ? card->tag : -1;
 		overview.press_x = cursor->x;
 		overview.press_y = cursor->y;
@@ -5078,22 +5147,22 @@ overview_button(uint32_t button, bool pressed)
 	}
 
 	c = overview.pressed;
-	overview.pressed = NULL;
+	source_tag = overview.press_tag;
+	dragging = overview.dragging;
+	overview_clear_press();
 	overview_motion();
-	if (card && overview.press_tag >= 0) {
-		uint32_t source = 1u << overview.press_tag;
+	if (card && source_tag >= 0) {
+		uint32_t source = 1u << source_tag;
 		if (c && (c->mon != overview.mon || !(c->tags & source)))
 			c = NULL;
-		if (card->tag == overview.press_tag && !overview_dragging()) {
+		if (card->tag == source_tag && !dragging) {
 			overview_activate(card->tag, c);
-		} else if (card->tag != overview.press_tag && c && !c->isfullscreen
-				&& overview_dragging()) {
+		} else if (card->tag != source_tag && c && !c->isfullscreen && dragging) {
 			/* A dwm-style tag move replaces the source bit only. */
 			setclienttags(c, (c->tags & ~source) | (1u << card->tag));
 			overview_select(card->tag);
 		}
 	}
-	overview.press_tag = -1;
 	return true;
 }
 
@@ -6203,9 +6272,8 @@ unmapnotify(struct wl_listener *listener, void *data)
 	/* Called when the surface is unmapped, and should no longer be shown. */
 	Client *c = wl_container_of(listener, c, unmap);
 	if (overview.pressed == c) {
-		overview.pressed = NULL;
-		overview.press_tag = -1;
-		overview.hover = -1;
+		overview_clear_press();
+		overview_motion();
 	}
 	if (c == grabc) {
 		cursor_mode = CurNormal;
