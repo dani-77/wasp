@@ -52,8 +52,7 @@ one in [`d77void/srcpkgs-d77`](https://github.com/d77void/srcpkgs-d77))
 for building with `xbps-src`.
 
 See the [build instructions](doc/DEVELOPMENT.md#building) for dependencies
-and source installation. The workspace overview is available in this
-source tree. Packages built from v0.12.1 predate it.
+and source installation. The workspace overview arrived in v0.13.0.
 
 ## Configure
 

@@ -4,6 +4,7 @@ wasp is a fork of [dwl](https://codeberg.org/dwl/dwl), branched from its
 `main` on 2026-02-25 (after dwl 0.8). Entries from dwl are tagged with
 the upstream commit they come from.
 
+* [0.13.0](#0130)
 * [0.12.1](#0121)
 * [0.12.0](#0120)
 * [0.11.0](#0110)
@@ -12,6 +13,26 @@ the upstream commit they come from.
 * [0.9.1](#091)
 * [0.9.0](#090)
 * [dwl history](#dwl-history)
+
+
+## 0.13.0
+
+### Added
+
+* Workspace overview: **Mod+O** or a four-finger swipe up opens scaled,
+  live previews of the selected tag and its neighbours on the selected
+  monitor, drawn with SceneFX. Browse with Up/Down or scroll, switch with
+  Enter or a click, and drag a window onto a neighbouring card to move it
+  there; a thumbnail follows the pointer and the destination card lights
+  up. Windows flagged `shield_when_capture` show solid thumbnails. Add
+  `{ mods = { "mod" }, key = "o", action = "overview" }` to `wasp.keys`
+  and `{ fingers = 4, direction = "up", action = "overview" }` to
+  `wasp.gestures` in an existing config.
+
+### Fixed
+
+* Fullscreen windows stay on their output during tag switches and come
+  back in fullscreen when their tag is shown again.
 
 
 ## 0.12.1
