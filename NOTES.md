@@ -20,6 +20,9 @@ into the usable area. The compositor owns keyboard and pointer navigation,
 and window drops use the existing tag mask and arrange path. The
 fullscreen layer changes visibility immediately on a tag switch, keeping
 its saved geometry and preventing the tag slide from crossing outputs.
+The separate Wasp Overview session worked in the hardware test. The
+example Lua config shows the key and swipe bindings in their respective
+sections.
 
 ## Up next (2026-08-12, Daniel's stated order) -- ALL DONE (2026-08-15)
 Three things, in this order (2026-08-14: #2 and #3 done). #7 (scenefx

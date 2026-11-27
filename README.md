@@ -73,9 +73,10 @@ a script), and most changes apply immediately.
 
 ## Workspace overview
 
-Press **Mod+O** to open the overview on the selected monitor. The example
-config also binds a four-finger upward swipe. Use Up/Down or scroll to
-browse tags, Enter or click to switch, and Escape to cancel.
+Press **Mod+O** or swipe up with four fingers to open the overview on the
+selected monitor. The example config sets these in `wasp.keys` and
+`wasp.gestures`. Use Up/Down or scroll to browse tags, Enter or click to
+switch, and Escape to cancel.
 Drag a window onto a neighbouring card to move it there. The overview
 stays open after the move so you can keep browsing or press Enter to follow
 the window. Fullscreen windows stay on their current tag and reappear in

@@ -245,6 +245,7 @@ bind({}, "Print", "spawn", { cmd = { "sh", "-c", "grim ~/screenshot-$(date +%Y%m
 -- Window navigation
 bind({ "mod" }, "j",    "focusstack", { dir = 1 })
 bind({ "mod" }, "k",    "focusstack", { dir = -1 })
+-- Mod+O opens and closes the workspace overview on the selected monitor.
 bind({ "mod" }, "o",    "overview")
 bind({ "mod" }, "Tab",  "view") -- go back to the previously selected tags
 bind({ "mod" }, "Return", "zoom")
@@ -354,6 +355,7 @@ wasp.gestures = {
   -- 3-finger left/right cycles focus between windows (same as Mod+j/k).
   -- { fingers = 3, direction = "left",  action = "focusstack", dir = -1 },
   -- { fingers = 3, direction = "right", action = "focusstack", dir = 1 },
+  -- Four-finger swipe up opens and closes the same workspace overview.
   { fingers = 4, direction = "up", action = "overview" },
   -- 4-finger left/right — next/previous workspace, wrapping (9 -> 1, 1 -> 9).
   -- { fingers = 4, direction = "left",  action = "viewshift", dir = -1 },

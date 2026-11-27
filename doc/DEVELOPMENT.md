@@ -188,7 +188,8 @@ current plans, not this doc.
 
 ## Workspace overview
 
-The `overview` action is available to Lua key and swipe bindings. It
+The example config binds `overview` to Mod+O and an upward four-finger
+swipe through `wasp.keys` and `wasp.gestures`, respectively. The action
 tracks a preview tag on the selected output. Enter and click call the
 normal tag activation path. Dropping a window replaces its source tag
 bit and keeps any other tags assigned to that window. Hidden scratchpads
