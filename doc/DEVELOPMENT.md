@@ -51,7 +51,10 @@ working:
   floating/hidden clients) and the config side by loading a Lua config
   through `luaconfig.c`; not yet run live in a session.
 - **Layouts**: tile, floating, monocle (upstream dwl), plus `dwindle`
-  (fibonacci/spiral tiling, adapted from [dwl-patches]).
+  (fibonacci/spiral tiling, adapted from [dwl-patches]). The tile, monocle
+  and dwindle layout functions take a tag mask and report window boxes
+  through a placement callback. The regular arrange path applies those
+  boxes and updates the monocle symbol and stacking order.
 - **Gaps**: `wasp.gaps = { inner, outer, smart }` — inner/outer spacing
   around tiled windows, `smart` drops the outer gap for a single window.
 - **Keyboard**: `wasp.keyboard = { layout, variant, model, options, rules,

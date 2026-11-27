@@ -7,6 +7,13 @@ wasp's own model: config driven live from `config.lua`, not `config.h` +
 recompile. Add to this as things come to mind; nothing here needs to be
 decided all at once.
 
+## Workspace overview
+
+The layout pass takes an explicit tag mask and a placement callback so
+it can calculate inactive tag geometry alongside the active layout.
+The callback in the regular arrange path resizes clients and keeps
+monocle stacking and the bar symbol in sync.
+
 ## Up next (2026-08-12, Daniel's stated order) -- ALL DONE (2026-08-15)
 Three things, in this order (2026-08-14: #2 and #3 done). #7 (scenefx
 blur/rounded corners), #8 (touchpad gestures), and #9 (modern

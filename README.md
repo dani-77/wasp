@@ -21,7 +21,8 @@ dwindle, floating) underneath, built on [wlroots] and [SceneFX], with
   (appearance, gaps, animations, blur, keybindings, keyboard layout,
   output scale, the bar) applies the instant you reload, no restart.
 - **Tiling layouts** — tile, monocle, dwindle (fibonacci/spiral), and
-  floating, switchable per-monitor and per-tag.
+  floating, switchable per-monitor and per-tag. The layout engine
+  can also calculate tiled placements for an inactive workspace.
 - **Animations** — open/close/move/tag-switch tweening, fade or zoom,
   cubic-bezier easing, off by default.
 - **Rounded corners + blur** — via SceneFX: window corner radius,

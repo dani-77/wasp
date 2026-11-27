@@ -311,9 +311,11 @@ typedef struct {
 	struct wl_listener surface_commit;
 } LayerSurface;
 
+typedef void (*PlaceClient)(Client *, struct wlr_box, void *);
+
 typedef struct {
 	const char *symbol;
-	void (*arrange)(Monitor *);
+	int (*arrange)(Monitor *, uint32_t, PlaceClient, void *);
 } Layout;
 
 typedef struct {
@@ -506,7 +508,7 @@ static void destroypointerconstraint(struct wl_listener *listener, void *data);
 static void destroysessionlock(struct wl_listener *listener, void *data);
 static void destroykeyboardgroup(struct wl_listener *listener, void *data);
 static Monitor *dirtomon(enum wlr_direction dir);
-static void dwindle(Monitor *m);
+static int dwindle(Monitor *m, uint32_t mask, PlaceClient place, void *data);
 static void drawbar(Monitor *m);
 static void drawbars(void);
 static void extworkspacecommit(struct wl_listener *listener, void *data);
@@ -530,7 +532,7 @@ static void killclient(const Arg *arg);
 static void locksession(struct wl_listener *listener, void *data);
 static void mapnotify(struct wl_listener *listener, void *data);
 static void maximizenotify(struct wl_listener *listener, void *data);
-static void monocle(Monitor *m);
+static int monocle(Monitor *m, uint32_t mask, PlaceClient place, void *data);
 static void motionabsolute(struct wl_listener *listener, void *data);
 static char **monoff(struct wlr_output *wlr_output);
 static void movestack(const Arg *arg);
@@ -574,7 +576,7 @@ static void swipeend(struct wl_listener *listener, void *data);
 static void swipeupdate(struct wl_listener *listener, void *data);
 static void tag(const Arg *arg);
 static void tagmon(const Arg *arg);
-static void tile(Monitor *m);
+static int tile(Monitor *m, uint32_t mask, PlaceClient place, void *data);
 static void togglebar(const Arg *arg);
 static void togglefloating(const Arg *arg);
 static void togglefullscreen(const Arg *arg);
@@ -1805,6 +1807,12 @@ handle_image_copy_capture_new_session(struct wl_listener *listener, void *data)
 		sync_shield(c, c->geom);
 }
 
+static void
+place_client(Client *c, struct wlr_box box, void *data)
+{
+	resize(c, box, 0);
+}
+
 void
 arrange(Monitor *m)
 {
@@ -1863,8 +1871,15 @@ arrange(Monitor *m)
 								: c->scene->node.parent);
 	}
 
-	if (m->lt[m->sellt]->arrange)
-		m->lt[m->sellt]->arrange(m);
+	if (m->lt[m->sellt]->arrange) {
+		int n = m->lt[m->sellt]->arrange(m, m->tagset[m->seltags], place_client, NULL);
+		if (m->lt[m->sellt]->arrange == monocle) {
+			if (n)
+				snprintf(m->ltsymbol, LENGTH(m->ltsymbol), "[%d]", n);
+			if ((c = focustop(m)))
+				wlr_scene_node_raise_to_top(&c->scene->node);
+		}
+	}
 	motionnotify(0, NULL, 0, 0, 0, 0);
 	checkidleinhibitor(NULL);
 }
@@ -3982,27 +3997,24 @@ insetgap(struct wlr_box b)
 	return b;
 }
 
-void
-monocle(Monitor *m)
+int
+monocle(Monitor *m, uint32_t mask, PlaceClient place, void *data)
 {
 	Client *c;
 	int n = 0;
 	struct wlr_box area;
 
 	wl_list_for_each(c, &clients, link)
-		if (VISIBLEON(c, m) && !c->isfloating && !c->isfullscreen)
+		if ((c->mon == m && (c->tags & mask)) && !c->isfloating && !c->isfullscreen)
 			n++;
 	area = gappedarea(m, n);
 
 	wl_list_for_each(c, &clients, link) {
-		if (!VISIBLEON(c, m) || c->isfloating || c->isfullscreen)
+		if (!(c->mon == m && (c->tags & mask)) || c->isfloating || c->isfullscreen)
 			continue;
-		resize(c, area, 0);
+		place(c, area, data);
 	}
-	if (n)
-		snprintf(m->ltsymbol, LENGTH(m->ltsymbol), "[%d]", n);
-	if ((c = focustop(m)))
-		wlr_scene_node_raise_to_top(&c->scene->node);
+	return n;
 }
 
 void
@@ -5294,8 +5306,8 @@ tagmon(const Arg *arg)
 		setmon(sel, dirtomon(arg->i), 0);
 }
 
-void
-tile(Monitor *m)
+int
+tile(Monitor *m, uint32_t mask, PlaceClient place, void *data)
 {
 	unsigned int mw, my, ty;
 	int i, n = 0;
@@ -5303,10 +5315,10 @@ tile(Monitor *m)
 	struct wlr_box area;
 
 	wl_list_for_each(c, &clients, link)
-		if (VISIBLEON(c, m) && !c->isfloating && !c->isfullscreen)
+		if ((c->mon == m && (c->tags & mask)) && !c->isfloating && !c->isfullscreen)
 			n++;
 	if (n == 0)
-		return;
+		return 0;
 	area = gappedarea(m, n);
 
 	if (n > m->nmaster)
@@ -5316,25 +5328,26 @@ tile(Monitor *m)
 	i = my = ty = 0;
 	wl_list_for_each(c, &clients, link) {
 		struct wlr_box slot;
-		if (!VISIBLEON(c, m) || c->isfloating || c->isfullscreen)
+		if (!(c->mon == m && (c->tags & mask)) || c->isfloating || c->isfullscreen)
 			continue;
 		if (i < m->nmaster) {
 			slot = (struct wlr_box){.x = area.x, .y = area.y + my, .width = mw,
 				.height = (area.height - my) / (MIN(n, m->nmaster) - i)};
-			resize(c, insetgap(slot), 0);
+			place(c, insetgap(slot), data);
 			my += slot.height;
 		} else {
 			slot = (struct wlr_box){.x = area.x + mw, .y = area.y + ty,
 				.width = area.width - mw, .height = (area.height - ty) / (n - i)};
-			resize(c, insetgap(slot), 0);
+			place(c, insetgap(slot), data);
 			ty += slot.height;
 		}
 		i++;
 	}
+	return n;
 }
 
-void
-dwindle(Monitor *m)
+int
+dwindle(Monitor *m, uint32_t mask, PlaceClient place, void *data)
 {
 	/* Adapted from dwl-patches' dwindle patch (fibonacci-spiral tiling:
 	 * each successive window halves whatever space is left, alternating
@@ -5347,10 +5360,10 @@ dwindle(Monitor *m)
 	struct wlr_box area;
 
 	wl_list_for_each(c, &clients, link)
-		if (VISIBLEON(c, m) && !c->isfloating && !c->isfullscreen)
+		if ((c->mon == m && (c->tags & mask)) && !c->isfloating && !c->isfullscreen)
 			n++;
 	if (n == 0)
-		return;
+		return 0;
 	area = gappedarea(m, (int)n);
 
 	nx = area.x;
@@ -5362,22 +5375,22 @@ dwindle(Monitor *m)
 
 	wl_list_for_each(c, &clients, link) {
 		struct wlr_box slot;
-		if (!VISIBLEON(c, m) || c->isfloating || c->isfullscreen)
+		if (!(c->mon == m && (c->tags & mask)) || c->isfloating || c->isfullscreen)
 			continue;
 
 		if (i == n - 1) {
 			slot = (struct wlr_box){nx, ny, nw, nh};
-			resize(c, insetgap(slot), 0);
+			place(c, insetgap(slot), data);
 		} else if (horizontal) {
 			int w = nw / 2;
 			slot = (struct wlr_box){nx, ny, w, nh};
-			resize(c, insetgap(slot), 0);
+			place(c, insetgap(slot), data);
 			nx += w;
 			nw -= w;
 		} else {
 			int h = nh / 2;
 			slot = (struct wlr_box){nx, ny, nw, h};
-			resize(c, insetgap(slot), 0);
+			place(c, insetgap(slot), data);
 			ny += h;
 			nh -= h;
 		}
@@ -5385,6 +5398,7 @@ dwindle(Monitor *m)
 		horizontal = !horizontal;
 		i++;
 	}
+	return n;
 }
 
 void
