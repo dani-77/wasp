@@ -6,22 +6,18 @@
 
 ---
 
-**wasp** is a Wayland compositor with a config you edit and reload live —
-no recompiling, no restarting. Everything lives in
-`~/.config/wasp/config.lua`: appearance, keybindings, gaps, animations,
-rounded corners and blur, touchpad gestures, autostart, named
-scratchpads, per-app window rules, and per-output settings. Save the
-file, press a key, and it's live. dwm-style tiling (tile, monocle,
-dwindle, floating) underneath, built on [wlroots] and [SceneFX], with
-[dwl] as its original foundation.
+**wasp** is a [dwl]-based Wayland compositor with dwm-style tiling,
+Lua configuration and live reload. It uses [wlroots] and [SceneFX] for
+window management and rendering. Configure appearance, keybindings,
+touchpad gestures, autostart, scratchpads and window and output rules
+in `~/.config/wasp/config.lua`.
 
 ## Features
 
-- **Live Lua config, hot-reload** — most of what you'd want to tweak
-  (appearance, gaps, animations, blur, keybindings, keyboard layout,
-  output scale, the bar) applies the instant you reload, no restart.
-- **Tiling layouts** — tile, monocle, dwindle (fibonacci/spiral), and
-  floating, switchable per-monitor and per-tag.
+- **Live Lua config** — reload keybindings, gestures, gaps, animations,
+  bar settings, keyboard layout and output scale.
+- **Tiling layouts** — tile, monocle, dwindle (fibonacci/spiral) and
+  floating, with layout selection per monitor.
 - **Workspace overview** — browse scaled previews of neighbouring tags
   and drag windows between them.
 - **Animations** — open/close/move/tag-switch tweening, fade or zoom,
@@ -32,9 +28,9 @@ dwindle, floating) underneath, built on [wlroots] and [SceneFX], with
   wired through the same action table as keybindings.
 - **Named scratchpads** — hidden, toggleable floating windows per slot
   (a drop-down terminal, a notes app, ...).
-- **Per-window capture privacy** — flag a window to refuse being
-  screen-shared/recorded on its own, and to blank out during any
-  whole-screen recording.
+- **Per-window capture privacy** — flag a window to refuse individual
+  capture and hide its content during whole-output capture through
+  `ext-image-copy-capture-v1`. The overview also shields its previews.
 - **Window & output rules** — send an app to a workspace, float it,
   center it, pin it to a monitor; per-output scale/layout/rotation.
 - **Workspaces over `ext-workspace-v1`** — any compatible bar or shell
@@ -55,28 +51,41 @@ broker). The same `PKGBUILD` is in
 one in [`d77void/srcpkgs-d77`](https://github.com/d77void/srcpkgs-d77))
 for building with `xbps-src`.
 
-Other distros: build from source — see
-[`doc/DEVELOPMENT.md`](doc/DEVELOPMENT.md) for dependencies and build
-steps.
+See the [build instructions](doc/DEVELOPMENT.md#building) for dependencies
+and source installation. The workspace overview is available in this
+source tree. Packages built from v0.12.1 predate it.
 
 ## Configure
 
+For a new config, copy the example from your installation or checkout.
+
+| Installation | Example config |
+| --- | --- |
+| Arch or Void package | `/usr/share/wasp/config.lua` |
+| Default source install | `/usr/local/share/wasp/config.lua` |
+| Source checkout | [`examples/config.lua`](examples/config.lua) |
+
+From a source checkout, copy the file with the following commands.
+
 ```sh
-mkdir -p ~/.config/wasp
-cp examples/config.lua ~/.config/wasp/config.lua
+config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/wasp"
+mkdir -p "$config_dir"
+cp -i examples/config.lua "$config_dir/config.lua"
 ```
 
-[`examples/config.lua`](examples/config.lua) is both the default and the
-full reference — every option, commented, ready to uncomment and tweak.
-Edit it, reload (`mod+shift+r` by default, or `pkill -HUP -x wasp` from
-a script), and most changes apply immediately.
+The example sets `Mod` to Alt. Press **Mod+Shift+R** to apply edits, or run
+`pkill -HUP -x wasp` from a script. A Lua syntax or runtime error during
+reload keeps the previous config. See [live reload](doc/DEVELOPMENT.md#live-reload)
+for when each setting takes effect.
 
 ## Workspace overview
 
 Press **Mod+O** or swipe up with four fingers to open the overview on the
 selected monitor. The example config sets these in `wasp.keys` and
-`wasp.gestures`. Use Up/Down or scroll to browse tags, Enter or click to
-switch, and Escape to cancel.
+`wasp.gestures`. The selected tag appears in the centre, with its immediate
+neighbours above and below. Use Up/Down or scroll to browse, Enter or click
+to switch, and Escape to cancel.
+
 Drag a window onto a neighbouring card to move it there. A thumbnail
 follows the pointer and the destination card lights up. The overview stays
 open after the move so you can keep browsing or press Enter to follow the
@@ -92,17 +101,18 @@ Existing configs can add the key and gesture to their respective tables.
 { fingers = 4, direction = "up", action = "overview" },
 ```
 
-Each monitor has its own tags. On a monitor showing several tags at once,
-the overview starts on the lowest-numbered tag. Protected windows use a
-solid preview under the `shield_when_capture` rule.
+Each monitor has its own tags. If several tags are visible on the selected
+monitor, the overview starts on the lowest-numbered tag. Dragging a window
+replaces its source tag and preserves any other tags assigned to it.
+Windows with `shield_when_capture` use solid thumbnails.
 
 ## Docs
 
 - [`doc/DEVELOPMENT.md`](doc/DEVELOPMENT.md) — build instructions,
   full feature status, and how everything's been verified.
-- [`NOTES.md`](NOTES.md) — the roadmap: what's done, what's next, and
-  why things were built the way they were. Read alongside
-  `doc/DEVELOPMENT.md` if you're building or contributing.
+- [`CHANGELOG.md`](CHANGELOG.md) — changes in released versions.
+- [`NOTES.md`](NOTES.md) — roadmap and implementation notes.
+- [`doc/NOTES.md`](doc/NOTES.md) — historical upstream dwl README.
 
 ## Credit
 

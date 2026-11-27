@@ -1,26 +1,10 @@
 # wasp — development docs
 
-This is wasp's development/status doc — build details, the full feature
-list with its own verification trail, and where every license
-obligation comes from. Meant to be read alongside
-[`NOTES.md`](../NOTES.md) (the roadmap and working notes: what's done,
-what's next, why things were built the way they were) — this file is
-"what wasp is and how to build it right now", `NOTES.md` is "what's
-changing and why". If you landed here first: [`README.md`](../README.md)
-is the actual front door, a quickstart for using wasp, not building it.
+Wasp is a [dwl] fork with Lua configuration and live reload. See the
+[README](../README.md) for installation and day-to-day use and the
+[working notes](../NOTES.md) for the roadmap and implementation history.
 
-**wasp** is a fork of [dwl] (dwm for Wayland) aiming for one thing dwl
-deliberately doesn't do: a config you can change without recompiling.
-Everything lives in `~/.config/wasp/config.lua`, and reloading it takes a
-save and a keypress, not a rebuild — see Hot-reload below. Beyond that,
-wasp keeps dwl's own goals — small, hackable, few dependencies, suckless
-in spirit — and pulls in a handful of [dwl-patches] adapted to fit this
-model rather than `config.h` + recompile.
-
-## Status (2026-08-15)
-
-Most of the day-to-day compositor is Lua-driven now. What's actually
-working:
+## Features
 
 - **Forked from dwl `main`**, full upstream git history kept.
 - **Bar**: the [dwl-patches] `bar` + `barconfig` patches applied and
@@ -29,10 +13,10 @@ working:
   `scripts/statusbar.sh` is a ready-to-use one (CPU/RAM/volume/battery/
   clock) — without something feeding it, the bar just shows its startup
   placeholder text forever, it has no built-in widgets of its own.
-- **Lua config, appearance**: wasp embeds Lua 5.4 (`luaconfig.c`/`.h`) and
-  loads `~/.config/wasp/config.lua` at startup. Border width/colors, the
-  bar's enable/position/layout, and the background color are live-driven
-  from it — see `examples/config.lua`. Verified by eye in a nested session.
+- **Lua config and appearance** — wasp embeds Lua 5.4 and loads
+  `$XDG_CONFIG_HOME/wasp/config.lua` or `~/.config/wasp/config.lua` at
+  startup. See the [example](../examples/config.lua) for borders, the
+  background, and bar visibility, positioning and layout.
 - **Keybindings**: fully Lua-driven — `wasp.keys` in `config.lua` builds the
   keymap at startup, `wasp.modkey` picks the primary modifier, and
   `wasp.terminal`/`wasp.menu` make the launched terminal/menu agnostic
@@ -46,10 +30,8 @@ working:
   neighbouring tiled window spatially (centre past the focused one's, and
   overlapping on the other axis), independent of layout. An entry in
   `wasp.keys`/`wasp.gestures`/`wasp.wheel` with an unknown key, action or
-  direction is skipped with a warning on stderr (`wasp.log`) rather than
-  silently. Logic verified with a unit harness (real `wl_list`, 2x2 grid,
-  floating/hidden clients) and the config side by loading a Lua config
-  through `luaconfig.c`; not yet run live in a session.
+  direction is skipped with a warning on stderr. A unit harness verified
+  spatial actions with a 2×2 grid and floating and hidden clients.
 - **Layouts**: tile, floating, monocle (upstream dwl), plus `dwindle`
   (fibonacci/spiral tiling, adapted from [dwl-patches]). The tile, monocle
   and dwindle layout functions take a tag mask and report window boxes
@@ -66,14 +48,8 @@ working:
 - **Autostart**: `wasp.autostart = { {"swaybg", "-i", "wall.png"}, ... }` —
   an array of argv arrays, fork+exec'd once at startup (no shell), killed
   cleanly on exit.
-- **Hot-reload**: a bound key (`mod+shift+r` by default) re-reads
-  `config.lua` and re-applies gaps, `wasp.animations` (including
-  re-baking its easing curves), the bar (visibility/position/colors),
-  every window's border color, the background, keyboard layout/repeat
-  speed, and keybindings themselves — all live, no restart. Border
-  *width* on already-open windows and `wasp.autostart` still need one
-  (autostart only ever runs once on purpose, so reload doesn't relaunch
-  everything in it).
+- **Hot reload** — the `reload` action or SIGHUP reloads the config.
+  See [live reload](#live-reload) for how settings take effect.
 - **Named scratchpads**: `wasp.scratchpad = { { name=, cmd=, app_id=, w=,
   h= }, ... }` — a hidden, toggleable floating window per slot, spawned
   the first time it's toggled (bound via the `toggle-scratchpad` action)
@@ -83,12 +59,11 @@ working:
   to a workspace, make them open floating, pin them to a monitor, or
   re-center them at their own requested size instead of wherever they
   happened to want to place themselves (often the top-left corner).
-  `shield_when_capture` refuses that window's own single-window capture
-  requests and blanks it for the duration of any real whole-output
-  capture (recording/screen-share) — it's the same on-screen content, so
-  you see the blank too for as long as capture is live, a visible cue
-  that it's protected, not a hidden swap; reverts to normal the instant
-  capture ends, so it's never a permanent placeholder.
+  `shield_when_capture` refuses individual capture requests through
+  `ext-image-copy-capture-v1`. An output capture session using that
+  protocol blanks visible protected windows in the compositor until the
+  last such session ends. The overview shields those windows in cards
+  and drag thumbnails.
 - **Workspaces exposed over `ext-workspace-v1`**: one workspace group per
   monitor, one workspace per tag inside it — so any bar/shell that speaks
   the protocol (not a dwl/wasp-specific thing to build against) sees and
@@ -111,9 +86,8 @@ working:
   uses the first matching rule, matching upstream dwl's own `monrules[]`
   semantics). `scale` is live — a bound key (`mod+shift+p`/`m`, same
   convention as spitfire) nudges it up/down at runtime, and it's the one
-  field `reload` re-applies; the rest stays a startup-time setting, like
-  it always was.
-
+  field `reload` re-applies. Other output rules apply when the output is
+  created.
 - **D-Bus session + xdg-desktop-portal**: `wasp-session` (what `wasp.desktop`
   actually launches) wraps startup in `dbus-run-session` and exports
   `XDG_CURRENT_DESKTOP=wasp`, so every client — the bar's status pipe,
@@ -121,55 +95,44 @@ working:
   session bus from the first process on, instead of falling back to an
   ad-hoc one per app (or none at all). `packaging/wasp-portals.conf`
   (installed to `/etc/xdg-desktop-portal/`) picks `gtk` for
-  FileChooser/Settings/Notification and `wlr` for ScreenCast/Screenshot —
-  see Building below for the packages that back those.
+  FileChooser/Settings/Notification/Print, `wlr` for ScreenCast/Screenshot,
+  and `gnome-keyring` for Secret. See [Building](#building) for the
+  runtime packages.
 - **Animations**: `wasp.animations = { enable, duration_move, duration_open,
   duration_close, duration_tag, type_open, type_close, zoom_ratio,
   fade_from_opacity, tag_direction, curve_move, curve_open, curve_close,
   curve_tag }` — MangoWC-style open/close/move/tag-switch tweening
   (`"fade"`/`"zoom"`/`"none"`, cubic-bezier easing per action). `enable =
-  false` (the default) reproduces the original instant behavior
-  bit-for-bit; live on hot-reload, same as gaps. Not ported: layer-shell
-  (bar/panel) animation, per-window-rule overrides, `slide`-from-edge for
-  OPEN — see `NOTES.md` item 3 for the full scope note.
+  false` (the default) applies geometry immediately. Tag animations
+  slide windows in and out, with immediate visibility changes for the
+  fullscreen layer. See [the working notes](../NOTES.md) for the
+  animation design.
 - **Touchpad gestures**: `wasp.gestures = { { fingers=, direction=,
   action=, ... }, ... }` — swipe gestures dispatched through the exact same
   action/arg table as `wasp.keys` (`focusmon`, `view`, `spawn`, ... all work
   here too), matched by finger count (0/omitted = any) and direction
   (`"left"`/`"right"`/`"up"`/`"down"`, classified from the swipe's dominant
-  axis once it ends). Swipe only — no pinch/hold yet.
-- **Modern screen-capture protocol**: `ext-image-copy-capture-v1` +
-  `ext-image-capture-source-v1` + `ext-foreign-toplevel-list-v1`, so a
-  client can request to capture one specific window, not just the whole
-  output (`grim -T <identifier>`, portal-mediated window-picker share/
-  screenshot dialogs, ...) — the legacy, wlroots-only, whole-output-only
-  `wlr-screencopy`/`wlr_export_dmabuf` pair keeps working exactly as
-  before, unreplaced, running alongside it. See `wasp.rules`'
-  `shield_when_capture` above for the privacy half.
-- **`wasp-list-windows`**: a small separate CLI tool (`make`d and
-  installed alongside `wasp` itself, own binary) that lists every open
-  window's `app_id`/title/capture-identifier — the piece `grim -T` can't
-  get on its own, since that identifier is an opaque, compositor-assigned
-  string with no other way to discover it:
+  axis once it ends).
+- **Mouse wheel bindings** — `wasp.wheel` maps physical wheel notches and
+  modifiers to the same actions as `wasp.keys`.
+- **Screen capture** — `ext-image-copy-capture-v1`,
+  `ext-image-capture-source-v1` and `ext-foreign-toplevel-list-v1` support
+  output and individual window capture. Legacy `wlr-screencopy` and
+  `wlr-export-dmabuf` remain available for whole-output capture. Wasp's
+  window shielding during output capture tracks sessions opened through
+  `ext-image-copy-capture-v1`.
+- **`wasp-list-windows`** — lists the capture identifier, app ID and title
+  for managed toplevels. `-a <app_id-substring>` prints matching
+  identifiers. Choose a single identifier when using a `grim` build
+  that supports `-T`.
 
   ```sh
-  $ wasp-list-windows
-  8caf7205bfd6065e1df7ea72bae88763     firefox                  Mozilla Firefox
-  fc02604939238c1c93a85ea9d1f0eb68     foot                     ~
-
-  # -a <app_id-substring> prints just the matching identifier(s), meant
-  # to be piped straight into grim -T:
-  $ grim -T "$(wasp-list-windows -a firefox)" firefox-window.png
+  wasp-list-windows
+  grim -T "<identifier>" window.png
   ```
 
-  A `shield_when_capture` window still shows up in the listing (this
-  only lists windows, it doesn't request to capture any of them) — but
-  `grim -T` against its identifier is refused, same as any other
-  single-window capture request for it. Note this only covers the real
-  `-T` path: `grim -g "$(slurp)"` (region-select) is still a whole-
-  *output* capture with a client-side crop under the hood, so a visible
-  `shield_when_capture` window elsewhere on that output still shields
-  even if the selected region never touches it.
+  Protected windows appear in the list. Wasp refuses individual capture
+  requests for their identifiers.
 - **Rounded corners + blur**: via [SceneFX](https://github.com/wlrfx/scenefx),
   a drop-in replacement for wlroots' own scene API — `wasp.border.radius`
   (same table as `width`/`focus`/`normal`, matching spitfire's own
@@ -199,9 +162,9 @@ dialogs on that layer. Fullscreen and floating geometry stay with the
 client when its tag is hidden.
 
 SceneFX draws the cards within the output's logical usable area, leaving
-reserved panel space available. The active tag uses regular window
-placements. Inactive tags use the current layout's placement callback
-with their own mask. Floating geometry and fullscreen state come from
+reserved panel space available. A preview whose tag mask matches the
+active mask uses current window placements. Other previews use the
+monitor's layout callback with their own tag mask. Floating geometry and fullscreen state come from
 the existing clients. The scene layer takes the latest surface buffers,
 including subsurfaces, and clips each thumbnail to its card and output.
 It preserves buffer transforms, source cropping, rounded corners and
@@ -224,89 +187,82 @@ Headless SceneFX checks covered Wayland and XWayland client previews.
 Keyboard and pointer tests covered cancellation, activation, scrolling,
 cross-tag drops, fullscreen and floating geometry, capture shielding, and
 session lock. Screenshots taken mid-drag verified that the thumbnail moved
-with the pointer and the target card remained highlighted. A two-output headless run verified that the overview and
-fullscreen transitions stay on their own output. The compositor also
-builds without XWayland.
+with the pointer and the target card remained highlighted. A two-output
+headless run verified overview and fullscreen output isolation. The
+overview also passed a hardware test in a separate Wasp session. The
+compositor builds without XWayland.
 
 ## Building
 
-Same dependencies as upstream dwl, plus Lua 5.4:
+Build dependencies include a C compiler, make, pkg-config and the
+following libraries and protocol definitions.
 
-- libinput, wayland, **wlroots 0.20** (libinput backend), xkbcommon
-- wayland-protocols, pkg-config (compile-time only)
-- fcft, pixman, tllist (for the bar)
-- **lua5.4** (development headers — e.g. `lua54-devel` on Void Linux)
-- libxcb, libxcb-wm (XWayland — see below)
-- **[scenefx](https://github.com/wlrfx/scenefx) 0.5**, built against
-  wasp's exact wlroots 0.20 — genuinely new dependency, backs rounded
-  corners + blur (see above). Package name/pkg-config module is
-  `scenefx-0.5`, same versioned convention wlroots itself uses.
+- libinput, Wayland (server, client and scanner), wayland-protocols,
+  xkbcommon and **wlroots 0.20** (`wlroots-0.20`).
+- [SceneFX](https://github.com/wlrfx/scenefx) **0.5** (`scenefx-0.5`)
+  built against wlroots 0.20. Wasp uses it for rendering, including
+  thumbnails, rounded corners and blur.
+- fcft, pixman and the tllist headers for the bar.
+- Lua 5.4 (`lua5.4`, or `lua54-devel` on Void Linux).
+- libxcb and xcb-icccm, plus wlroots with XWayland support, for the
+  default build. Xwayland is also a runtime dependency for X11 clients.
 
-`make` also builds `wasp-list-windows` (see Modern screen-capture
-protocol above) — a plain Wayland *client*, needs `wayland-client`'s
-headers/lib, but that's part of the same `wayland` dev package `wasp`
-itself already needs (`wayland-devel` on Void, same package that
-provides `wayland-server`), not a separate dependency to install.
-
-XWayland is built by default (needs a wlroots built with X11 support,
-which is the common case); disable it by commenting out the relevant
-lines in `config.mk` if you'd rather not pull in libxcb at all.
+`make` builds the compositor and the `wasp-list-windows` Wayland client.
+For a build without XWayland, set `XWAYLAND=` and `XLIBS=` in `config.mk`
+or pass both assignments to `make` and `make install`. Use a clean build
+when changing those flags.
 
 ```sh
 make
 sudo make install
 ```
 
-`make install` also drops `packaging/wasp-portals.conf` under
-`/etc/xdg-desktop-portal/`, but it only has anything to configure once
-the backends it names are actually installed: `dbus`, `dbus-run-session`
-(usually the same package), `xdg-desktop-portal`,
-`xdg-desktop-portal-gtk`, and `xdg-desktop-portal-wlr`. None of these are
-wasp-specific — same portal backends most wlroots compositors use — so
-they're not pulled in by `make install` itself, just expected to already
-be on the system (or installed alongside it) the way libinput or wayland
-are.
+`make install` uses `/usr/local` as its default prefix and installs the
+session entry, programs and example config. `PREFIX` sets the installation
+prefix and `DESTDIR` stages the files under a separate root. The portal
+preferences are installed to `/etc/xdg-desktop-portal/wasp-portals.conf`
+inside that root.
 
-A Void Linux `xbps-src` package template lives at
-[`packaging/void/template`](../packaging/void/template), for reference
-(the one actually used to build packages lives in a separate package
-collection, not in this repo).
+The `wasp-session` wrapper uses `dbus-run-session`. Install the GTK and
+wlr backends alongside `xdg-desktop-portal` to enable the configured
+portals. The Secret portal preference uses GNOME Keyring. Void and Arch
+build recipes are available under [`packaging/`](../packaging/).
 
 ## Configuring
 
-Copy the example to get started:
+Copy [`examples/config.lua`](../examples/config.lua) to
+`${XDG_CONFIG_HOME:-$HOME/.config}/wasp/config.lua`. Installed copies
+live under `$PREFIX/share/wasp/config.lua`, typically
+`/usr/local/share/wasp/config.lua` for a source build and
+`/usr/share/wasp/config.lua` for a package. The compositor uses its
+compiled defaults when the user config is missing.
 
-```sh
-mkdir -p ~/.config/wasp
-cp examples/config.lua ~/.config/wasp/config.lua
-```
+### Live reload
 
-`make install` also drops a copy at `/usr/local/share/wasp/config.lua`
-(`$PREFIX/share/wasp/`) — if you installed from a release tarball rather
-than a source checkout, that's where to find it instead of hunting for
-`examples/` in source you may not have on disk:
+The example binds **Mod+Shift+R** to `reload`. SIGHUP triggers the same
+action. A syntax or runtime error keeps the last successfully loaded config
+and reports the error on stderr. The session wrapper writes stderr to
+`$XDG_STATE_HOME/wasp/wasp.log` or `~/.local/state/wasp/wasp.log`. When
+`notify-send` and a notification daemon are available, the error also
+appears as a desktop notification.
 
-```sh
-cp /usr/local/share/wasp/config.lua ~/.config/wasp/config.lua
-```
+- **On reload** — keys, gestures, wheel bindings, gaps, snap distance,
+  animation settings, blur parameters for existing blur nodes, bar
+  settings, border colours, background, keyboard settings and output
+  scale.
+- **On window or output creation** — window rules and border width apply
+  to newly mapped windows. Corner radius updates on a geometry update.
+  The blur toggle controls blur nodes on newly mapped windows and newly
+  created outputs. Output rules other than scale apply when the output
+  is created.
+- **On session startup** — `wasp.autostart` launches its commands once.
 
-`examples/config.lua` is both the default and the reference: appearance,
-gaps, keyboard, monitors/output scale, terminal/menu, autostart, named
-scratchpads, window rules, and a full suggested keymap (with a comment
-block explaining every action and its fields). It'll keep growing as more
-of `config.h` moves over to Lua — see [`NOTES.md`](../NOTES.md) for what's
-coming.
+### Status bar input
 
-For the bar's right-side status text, pipe something into wasp's `stdin`
-(it has no built-in widgets of its own, same as upstream dwl) —
-`scripts/statusbar.sh` is a ready-to-use one. Since stdin is fixed at
-launch, this has to happen at the point wasp itself is started, not
-after — `wasp.desktop`'s `Exec=` already points at a wrapper
-(`scripts/wasp-session`, installed as `wasp-session`) that does exactly
-that, so if you launch wasp through `make install` + a greeter (greetd,
-...), it's wired up automatically and there's nothing else to do.
-
-For local/dev testing, without installing, do it by hand instead:
+The built-in bar reads right-side status text from standard input. The
+`wasp.desktop` entry runs `wasp-session`, which pipes `wasp-statusbar`
+into the compositor. To use the same status script from a checkout, run
+the compositor with the script connected at startup.
 
 ```sh
 scripts/statusbar.sh | ./wasp

@@ -1,10 +1,9 @@
 # Original dwl README.md
 
-Preserved as-is for reference — this is upstream dwl's README.md
-(https://codeberg.org/dwl/dwl) as it stood at the commit wasp was
-forked from, before README.md was rewritten for wasp itself. See the
-root README.md for wasp's own docs, and NOTES.md for the running
-working notes on what's adapted/still to do.
+This is the upstream dwl README from the commit wasp forked from.
+For wasp, see the [user README](../README.md), the
+[development documentation](DEVELOPMENT.md) and the
+[working notes](../NOTES.md).
 
 ---
 
