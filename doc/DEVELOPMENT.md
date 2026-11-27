@@ -75,7 +75,7 @@ Wasp is a [dwl] fork with Lua configuration and live reload. See the
   `$XDG_RUNTIME_DIR/d77-workspaces-$WAYLAND_DISPLAY`, one line per
   workspace, `<ext-workspace id> <window count>`, with the ids
   `createmon()` gives the handles (`<output>-<tag>`). Utumno,
-  quickshell-d77, fabric-d77 and helium-d77 read it to dim empty tags.
+  quickshell-d77 (archived; superseded by Utumno), fabric-d77 and helium-d77 read it to dim empty tags.
   `publishworkspaces()` rewrites it from `drawbars()` only when it
   changes (written beside it and renamed); the scratchpad tag is not
   counted; `cleanup()` removes it and stops further writes, since
