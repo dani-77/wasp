@@ -89,7 +89,7 @@ static MonitorRule default_monrules[1];
  * broken, or just doesn't set wasp.keys. The real, fuller suggested keymap
  * (layouts, monitor nav, resize, moveresizekb, ...) lives in
  * examples/config.lua as data, not duplicated here in C. */
-#define NDEFAULTKEYS 38
+#define NDEFAULTKEYS 39
 static Key default_keys[NDEFAULTKEYS];
 
 static void
@@ -108,6 +108,7 @@ build_default_keys(void)
 	ActionFn spawnfn = wasp_lookup_action("spawn");
 	ActionFn focusstackfn = wasp_lookup_action("focusstack");
 	ActionFn viewfn = wasp_lookup_action("view");
+	ActionFn overviewfn = wasp_lookup_action("overview");
 	ActionFn tagfn = wasp_lookup_action("tag");
 	ActionFn killclientfn = wasp_lookup_action("killclient");
 	ActionFn quitfn = wasp_lookup_action("quit");
@@ -120,6 +121,7 @@ build_default_keys(void)
 	default_keys[n++] = (Key){ modkey, XKB_KEY_p, spawnfn, (Arg){.v = menucmd} };
 	default_keys[n++] = (Key){ modkey, XKB_KEY_j, focusstackfn, (Arg){.i = +1} };
 	default_keys[n++] = (Key){ modkey, XKB_KEY_k, focusstackfn, (Arg){.i = -1} };
+	default_keys[n++] = (Key){ modkey, XKB_KEY_o, overviewfn, (Arg){0} };
 	default_keys[n++] = (Key){ modkey, XKB_KEY_b, togglebarfn, (Arg){0} };
 	default_keys[n++] = (Key){ modkey | WLR_MODIFIER_SHIFT, XKB_KEY_c, killclientfn, (Arg){0} };
 	default_keys[n++] = (Key){ modkey | WLR_MODIFIER_SHIFT, XKB_KEY_q, quitfn, (Arg){0} };

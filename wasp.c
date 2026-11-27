@@ -88,6 +88,7 @@
 #include <wlr/interfaces/wlr_buffer.h>
 #include <wlr/util/log.h>
 #include <wlr/util/region.h>
+#include <wlr/util/transform.h>
 #include <xkbcommon/xkbcommon.h>
 #ifdef XWAYLAND
 #include <wlr/xwayland.h>
@@ -130,7 +131,7 @@ enum { CurNormal, CurPressed, CurMove, CurResize }; /* cursor */
  * the default whenever wasp.animations.enable is false. */
 enum { AnimNone, AnimOpen, AnimClose, AnimMove, AnimTag };
 enum { XDGShell, LayerShell, X11 }; /* client types */
-enum { LyrBg, LyrBottom, LyrTile, LyrFloat, LyrTop, LyrFS, LyrUnmanaged, LyrOverlay,
+enum { LyrBg, LyrBottom, LyrTile, LyrFloat, LyrTop, LyrFS, LyrUnmanaged, LyrOverview, LyrOverlay,
 	LyrBlock, NUM_LAYERS }; /* scene layers */
 enum { ClkTagBar, ClkLtSymbol, ClkStatus, ClkTitle, ClkClient, ClkRoot }; /* clicks */
 
@@ -216,6 +217,7 @@ typedef struct {
 	struct wl_list flink;
 	struct wlr_box geom; /* layout-relative, includes border */
 	struct wlr_box prev; /* layout-relative, includes border */
+	struct wlr_box overview_box; /* temporary placement for the card being built */
 	struct wlr_box bounds; /* only width and height are used */
 	/* wasp: animation state (wasp.animations) -- see start_animation()/
 	 * animate_client() in wasp.c. action/running/AnimNone when nothing is
@@ -433,7 +435,7 @@ struct wasp_curve {
 };
 
 /* function declarations */
-static void applybounds(Client *c, struct wlr_box *bbox);
+static void applybounds(Client *c, struct wlr_box *box, const struct wlr_box *bbox);
 static void applyrules(Client *c);
 /* wasp: animations (wasp.animations, see NOTES.md item 3, luaconfig.h) */
 static uint32_t now_ms(void);
@@ -459,6 +461,15 @@ static int tick_closing_clients(void);
 static void sync_shield(Client *c, struct wlr_box vis);
 static void handle_new_toplevel_capture_request(struct wl_listener *listener, void *data);
 static void handle_image_copy_capture_new_session(struct wl_listener *listener, void *data);
+static void overview_damage(Monitor *m);
+static void overview_dismiss(void);
+static void overview_motion(void);
+static void overview_select(int index);
+static bool overview_key(xkb_keysym_t sym);
+static bool overview_button(uint32_t button, bool pressed);
+static void toggleoverview(const Arg *arg);
+static void setclienttags(Client *c, uint32_t newtags);
+static void overview_new_surface(struct wl_listener *listener, void *data);
 static void arrange(Monitor *m);
 static void arrangelayer(Monitor *m, struct wl_list *list,
 		struct wlr_box *usable_area, int exclusive);
@@ -622,6 +633,21 @@ static const char *pending_scratchpad_appid;
 static int locked;
 static void *exclusive_focus;
 static Client *focused_client;
+struct OverviewCard {
+	struct wlr_scene_tree *tree;
+	struct wlr_box box;
+	int tag;
+};
+static struct {
+	Monitor *mon;
+	struct wlr_scene_tree *tree;
+	struct OverviewCard cards[3];
+	size_t card_count;
+	int selected, press_tag, hover;
+	Client *pressed;
+	double press_x, press_y, scroll;
+	bool dirty, buttons[KEY_MAX + 1];
+} overview = { .press_tag = -1, .hover = -1 };
 static struct wl_display *dpy;
 static struct wl_event_loop *event_loop;
 static struct wlr_backend *backend;
@@ -633,6 +659,7 @@ static const int layermap[] = { LyrBg, LyrBottom, LyrTop, LyrOverlay };
 static struct wlr_renderer *drw;
 static struct wlr_allocator *alloc;
 static struct wlr_compositor *compositor;
+static struct wl_listener new_overview_surface = { .notify = overview_new_surface };
 static struct wlr_session *session;
 
 static struct wlr_xdg_shell *xdg_shell;
@@ -801,6 +828,7 @@ static const struct { const char *name; ActionFn fn; } actiontable[] = {
 	{ "zoom",             zoom },
 	{ "view",             view },
 	{ "viewshift",        viewshift },
+	{ "overview",         toggleoverview },
 	{ "toggleview",       toggleview },
 	{ "tag",              tag },
 	{ "toggletag",        toggletag },
@@ -845,33 +873,33 @@ wasp_layout_by_name(const char *name)
 
 /* function implementations */
 void
-applybounds(Client *c, struct wlr_box *bbox)
+applybounds(Client *c, struct wlr_box *box, const struct wlr_box *bbox)
 {
 	/* set minimum client size to 1 */
-	c->geom.width = MAX(1 + 2 * (int)c->bw, c->geom.width);
-	c->geom.height = MAX(1 + 2 * (int)c->bw, c->geom.height);
+	box->width = MAX(1 + 2 * (int)c->bw, box->width);
+	box->height = MAX(1 + 2 * (int)c->bw, box->height);
 
 	if (!c->isfullscreen) {
 		struct wlr_box min = {0}, max = {0};
 		client_get_size_hints(c, &max, &min);
-		c->geom.width = MAX(min.width + 2 * (int)c->bw, c->geom.width);
-		c->geom.height = MAX(min.height + 2 * (int)c->bw, c->geom.height);
+		box->width = MAX(min.width + 2 * (int)c->bw, box->width);
+		box->height = MAX(min.height + 2 * (int)c->bw, box->height);
 		/* Some clients set their max size to INT_MAX, which does not violate the
 		 * protocol but it's unnecesary, as they can set their max size to zero. */
 		if (max.width > 0 && 2 * (int)c->bw <= INT_MAX - max.width) /* Checks for overflow */
-			c->geom.width = MIN(max.width + 2 * (int)c->bw, c->geom.width);
+			box->width = MIN(max.width + 2 * (int)c->bw, box->width);
 		if (max.height > 0 && 2 * (int)c->bw <= INT_MAX - max.height) /* Checks for overflow */
-			c->geom.height = MIN(max.height + 2 * (int)c->bw, c->geom.height);
+			box->height = MIN(max.height + 2 * (int)c->bw, box->height);
 	}
 
-	if (c->geom.x >= bbox->x + bbox->width)
-		c->geom.x = bbox->x + bbox->width - c->geom.width;
-	if (c->geom.y >= bbox->y + bbox->height)
-		c->geom.y = bbox->y + bbox->height - c->geom.height;
-	if (c->geom.x + c->geom.width <= bbox->x)
-		c->geom.x = bbox->x;
-	if (c->geom.y + c->geom.height <= bbox->y)
-		c->geom.y = bbox->y;
+	if (box->x >= bbox->x + bbox->width)
+		box->x = bbox->x + bbox->width - box->width;
+	if (box->y >= bbox->y + bbox->height)
+		box->y = bbox->y + bbox->height - box->height;
+	if (box->x + box->width <= bbox->x)
+		box->x = bbox->x;
+	if (box->y + box->height <= bbox->y)
+		box->y = bbox->y;
 }
 
 /* wasp: centered box of the given size within m's usable area -- shared by
@@ -1821,6 +1849,7 @@ arrange(Monitor *m)
 	if (!m->wlr_output->enabled)
 		return;
 
+	overview_damage(m);
 	/* wasp: animated tag-switch (wasp.animations) replaces the plain
 	 * enabled/suspended toggle with tagin()/tagout() when on -- see their
 	 * own comments, and NOTES.md item 3. Reading c->scene->node.enabled
@@ -2003,6 +2032,18 @@ axisnotify(struct wl_listener *listener, void *data)
 
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 
+	if (overview.mon) {
+		if (event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL) {
+			double amount = event->delta_discrete ? event->delta_discrete / 120.0 : event->delta / 40.0;
+			if (amount * overview.scroll < 0)
+				overview.scroll = 0;
+			overview.scroll += amount;
+			overview_select(overview.selected + (int)overview.scroll);
+			overview.scroll = fmod(overview.scroll, 1.0);
+		}
+		return;
+	}
+
 	/* wasp: only a real wheel runs wasp.wheel bindings, once per notch.
 	 * delta_discrete is in 120ths of a notch, which high-resolution wheels
 	 * split over several events, and touchpad (continuous) scrolling would
@@ -2130,6 +2171,9 @@ buttonpress(struct wl_listener *listener, void *data)
 
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 
+	if (overview_button(event->button, event->state == WL_POINTER_BUTTON_STATE_PRESSED))
+		return;
+
 	click = ClkRoot;
 	xytonode(cursor->x, cursor->y, NULL, &c, NULL, NULL, NULL);
 	if (c)
@@ -2237,6 +2281,8 @@ cleanup(void)
 	if (workspaces[0])
 		unlink(workspaces);
 
+	overview_dismiss();
+	wl_list_remove(&new_overview_surface.link);
 	cleanuplisteners();
 #ifdef XWAYLAND
 	wlr_xwayland_destroy(xwayland);
@@ -2290,6 +2336,9 @@ cleanupmon(struct wl_listener *listener, void *data)
 	Monitor *m = wl_container_of(listener, m, destroy);
 	LayerSurface *l, *tmp;
 	size_t i;
+
+	if (overview.mon == m)
+		overview_dismiss();
 
 	/* m->layers[i] are intentionally not unlinked */
 	for (i = 0; i < LENGTH(m->layers); i++) {
@@ -3375,6 +3424,8 @@ focusclient(Client *c, int lift)
 	if (locked)
 		return;
 
+	overview_damage(c ? c->mon : NULL);
+
 	/* Raise client in stacking order if requested */
 	if (c && lift)
 		wlr_scene_node_raise_to_top(&c->scene->node);
@@ -3656,7 +3707,7 @@ keypress(struct wl_listener *listener, void *data)
 	uint32_t keycode = event->keycode + 8;
 	struct wlr_keyboard *kb = &group->wlr_group->keyboard;
 	xkb_layout_index_t layout = xkb_state_key_get_layout(kb->xkb_state, keycode);
-	int handled = 0;
+	int handled = 0, repeat = 0;
 
 	/* Only one keysym per level: multiple keysyms per keycode don't
 	 * really exist in the real world */
@@ -3673,25 +3724,31 @@ keypress(struct wl_listener *listener, void *data)
 	/* On _press_ if there is no active screen locker,
 	 * attempt to process a compositor keybinding. */
 	if (!locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
-		for (i = 0; i < 3; i++) {
+		if (overview.mon && !(CLEANMASK(group->mods) & ~WLR_MODIFIER_MOD2)
+				&& overview_key(group->keysyms[2]))
+			handled = 1;
+		for (i = 0; !handled && i < 3; i++) {
 			const Key *key = keybinding(group->mods, group->keysyms[i]);
 			if (key) {
-				consumed[event->keycode] = 1;
+				repeat = key->func != toggleoverview;
 				key->func(&key->arg);
 				handled = 1;
 				break;
 			}
 		}
+		handled = handled || overview.mon;
 	}
 
-	if (handled && group->wlr_group->keyboard.repeat_info.delay > 0)
+	if (repeat && !overview.mon && group->wlr_group->keyboard.repeat_info.delay > 0)
 		wl_event_source_timer_update(group->key_repeat_source,
 				group->wlr_group->keyboard.repeat_info.delay);
 	else
 		wl_event_source_timer_update(group->key_repeat_source, 0);
 
-	if (handled)
+	if (handled) {
+		consumed[event->keycode] = 1;
 		return;
+	}
 
 	if (consumed[event->keycode]) {
 		if (event->state == WL_KEYBOARD_KEY_STATE_RELEASED)
@@ -3722,7 +3779,7 @@ keyrepeat(void *data)
 {
 	KeyboardGroup *group = data;
 	int i;
-	if (locked || group->wlr_group->keyboard.repeat_info.rate <= 0)
+	if (locked || overview.mon || group->wlr_group->keyboard.repeat_info.rate <= 0)
 		return 0;
 
 	wl_event_source_timer_update(group->key_repeat_source,
@@ -3757,6 +3814,7 @@ locksession(struct wl_listener *listener, void *data)
 		wlr_session_lock_v1_destroy(session_lock);
 		return;
 	}
+	overview_dismiss();
 	lock = session_lock->data = ecalloc(1, sizeof(*lock));
 	focusclient(NULL, 0);
 
@@ -4180,6 +4238,15 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	struct wlr_surface *surface = NULL;
 	struct wlr_pointer_constraint_v1 *constraint;
 
+	if (overview.mon) {
+		if (time) {
+			wlr_cursor_move(cursor, device, dx, dy);
+			wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+		}
+		overview_motion();
+		return;
+	}
+
 	/* Find the client under the pointer and send the event along. */
 	xytonode(cursor->x, cursor->y, &surface, &c, &l, &sx, &sy);
 
@@ -4553,6 +4620,514 @@ reload(const Arg *arg)
 	drawbars();
 }
 
+/* The overview's scene holds client buffers independently of the live tag
+ * trees. Browsing neither arranges those trees nor configures their clients. */
+struct OverviewPreview {
+	struct wlr_scene_tree *tree;
+	struct wlr_box from, to, clip;
+};
+
+static void
+overview_damage(Monitor *m)
+{
+	if (!overview.mon || (m && m != overview.mon))
+		return;
+	overview.dirty = true;
+	wlr_output_schedule_frame(overview.mon->wlr_output);
+}
+
+static void
+overview_dismiss(void)
+{
+	if (!overview.mon)
+		return;
+	overview.mon = NULL;
+	overview.pressed = NULL;
+	overview.press_tag = overview.hover = -1;
+	overview.scroll = 0;
+	if (overview.tree)
+		wlr_scene_node_destroy(&overview.tree->node);
+	overview.tree = NULL;
+}
+
+static void
+toggleoverview(const Arg *arg)
+{
+	uint32_t mask;
+	if (overview.mon) {
+		overview_dismiss();
+		motionnotify(0, NULL, 0, 0, 0, 0);
+		return;
+	}
+	if (locked || !selmon || !selmon->wlr_output->enabled
+			|| wlr_box_empty(&selmon->w) || cursor_mode != CurNormal
+			|| seat->pointer_state.button_count || seat->drag
+			|| wlr_seat_pointer_has_grab(seat) || wlr_seat_keyboard_has_grab(seat)
+			|| wlr_seat_touch_has_grab(seat))
+		return;
+
+	overview.mon = selmon;
+	mask = selmon->tagset[selmon->seltags] & TAGMASK;
+	overview.selected = mask ? __builtin_ctz(mask) : 0;
+	if (active_constraint) {
+		struct wlr_pointer_constraint_v1 *constraint = active_constraint;
+		active_constraint = NULL;
+		wlr_pointer_constraint_v1_send_deactivated(constraint);
+	}
+	wlr_seat_pointer_notify_clear_focus(seat);
+	wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
+	overview_damage(selmon);
+}
+
+static struct wlr_scene_rect *
+overview_rect(struct wlr_scene_tree *tree, const struct wlr_box *box, const float color[4])
+{
+	struct wlr_scene_rect *rect = wlr_scene_rect_create(tree, box->width, box->height, color);
+	wlr_scene_node_set_position(&rect->node, box->x, box->y);
+	return rect;
+}
+
+/* Map both endpoints so adjacent surface buffers share a pixel edge. */
+static struct wlr_box
+overview_project(struct wlr_box box, struct wlr_box from, struct wlr_box to)
+{
+	double sx = (double)to.width / from.width, sy = (double)to.height / from.height;
+	int x = (int)lround((box.x - from.x) * sx);
+	int y = (int)lround((box.y - from.y) * sy);
+	return (struct wlr_box){
+		to.x + x, to.y + y,
+		(int)lround((box.x + box.width - from.x) * sx) - x,
+		(int)lround((box.y + box.height - from.y) * sy) - y,
+	};
+}
+
+struct OverviewSample {
+	struct wlr_surface *surface;
+	uint32_t sequence;
+	struct wl_listener sample, node_destroy, surface_destroy;
+};
+
+static void
+overview_sample_buffer(struct wl_listener *listener, void *data)
+{
+	struct OverviewSample *sample = wl_container_of(listener, sample, sample);
+	const struct wlr_scene_output_sample_event *event = data;
+	struct wlr_linux_drm_syncobj_surface_v1_state *sync;
+
+	if (!event->release_timeline || !sample->surface
+			|| sample->surface->current.seq != sample->sequence)
+		return;
+	sync = wlr_linux_drm_syncobj_v1_get_surface_state(sample->surface);
+	if (sync)
+		wlr_linux_drm_syncobj_v1_state_add_release_point(sync,
+				event->release_timeline, event->release_point, event_loop);
+}
+
+static void
+overview_sample_surface_destroy(struct wl_listener *listener, void *data)
+{
+	struct OverviewSample *sample = wl_container_of(listener, sample, surface_destroy);
+	wl_list_remove(&sample->surface_destroy.link);
+	wl_list_init(&sample->surface_destroy.link);
+	sample->surface = NULL;
+}
+
+static void
+overview_sample_node_destroy(struct wl_listener *listener, void *data)
+{
+	struct OverviewSample *sample = wl_container_of(listener, sample, node_destroy);
+	wl_list_remove(&sample->surface_destroy.link);
+	wl_list_remove(&sample->sample.link);
+	wl_list_remove(&sample->node_destroy.link);
+	free(sample);
+}
+
+static void
+overview_buffer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data)
+{
+	struct OverviewPreview *preview = data;
+	struct wlr_scene_surface *ss = wlr_scene_surface_try_from_buffer(buffer);
+	const struct wlr_alpha_modifier_surface_v1_state *alpha;
+	struct wlr_linux_drm_syncobj_surface_v1_state *sync;
+	struct wlr_buffer *backing = buffer->buffer;
+	struct wlr_scene_buffer *clone;
+	struct wlr_fbox source = buffer->src_box, crop;
+	struct wlr_box dest, clipped;
+	int width, height, transformed_width, transformed_height;
+	double scale;
+	struct fx_corner_radii corners;
+	bool rotated = buffer->transform & WL_OUTPUT_TRANSFORM_90;
+
+	if (!ss || !backing
+			|| wlr_xdg_popup_try_from_wlr_surface(wlr_surface_get_root_surface(ss->surface)))
+		return;
+	width = backing->width;
+	height = backing->height;
+	transformed_width = rotated ? height : width;
+	transformed_height = rotated ? width : height;
+	dest = overview_project((struct wlr_box){ sx, sy,
+			buffer->dst_width ? buffer->dst_width : transformed_width,
+			buffer->dst_height ? buffer->dst_height : transformed_height },
+			preview->from, preview->to);
+	if (!wlr_box_intersection(&clipped, &dest, &preview->clip))
+		return;
+
+	if (wlr_fbox_empty(&source))
+		source = (struct wlr_fbox){ 0, 0, width, height };
+	/* The scene uses a source box in buffer coordinates. Crop in the
+	 * transformed orientation first, then map that crop back. */
+	wlr_fbox_transform(&source, &source, buffer->transform, width, height);
+	crop = (struct wlr_fbox){
+		source.x + (clipped.x - dest.x) * source.width / dest.width,
+		source.y + (clipped.y - dest.y) * source.height / dest.height,
+		clipped.width * source.width / dest.width,
+		clipped.height * source.height / dest.height,
+	};
+	wlr_fbox_transform(&source, &crop, wlr_output_transform_invert(buffer->transform),
+			transformed_width, transformed_height);
+
+	clone = wlr_scene_buffer_create(preview->tree, NULL);
+	sync = wlr_linux_drm_syncobj_v1_get_surface_state(ss->surface);
+	wlr_scene_buffer_set_buffer_with_options(clone, backing, sync
+			? &(struct wlr_scene_buffer_set_buffer_options){
+				.wait_timeline = sync->acquire_timeline, .wait_point = sync->acquire_point,
+			} : NULL);
+	if (sync && sync->acquire_timeline) {
+		/* A detached scene buffer must register its own GPU sampling
+		 * with the commit's release fence. */
+		struct OverviewSample *sample = ecalloc(1, sizeof(*sample));
+		sample->surface = ss->surface;
+		sample->sequence = ss->surface->current.seq;
+		LISTEN(&clone->events.output_sample, &sample->sample, overview_sample_buffer);
+		LISTEN(&clone->node.events.destroy, &sample->node_destroy, overview_sample_node_destroy);
+		LISTEN(&ss->surface->events.destroy, &sample->surface_destroy, overview_sample_surface_destroy);
+	}
+	wlr_scene_node_set_position(&clone->node, clipped.x, clipped.y);
+	wlr_scene_buffer_set_source_box(clone, &source);
+	wlr_scene_buffer_set_dest_size(clone, clipped.width, clipped.height);
+	wlr_scene_buffer_set_transform(clone, buffer->transform);
+	wlr_scene_buffer_set_filter_mode(clone, buffer->filter_mode);
+	alpha = wlr_alpha_modifier_v1_get_surface_state(ss->surface);
+	if (alpha)
+		wlr_scene_buffer_set_opacity(clone, (float)alpha->multiplier);
+	scale = MIN((double)preview->to.width / preview->from.width,
+			(double)preview->to.height / preview->from.height);
+	corners = corner_radii_new(
+		clipped.x == dest.x && clipped.y == dest.y ? (int)lround(scale * buffer->corners.top_left) : 0,
+		clipped.width + clipped.x == dest.width + dest.x && clipped.y == dest.y
+			? (int)lround(scale * buffer->corners.top_right) : 0,
+		clipped.width + clipped.x == dest.width + dest.x && clipped.height + clipped.y == dest.height + dest.y
+			? (int)lround(scale * buffer->corners.bottom_right) : 0,
+		clipped.x == dest.x && clipped.height + clipped.y == dest.height + dest.y
+			? (int)lround(scale * buffer->corners.bottom_left) : 0);
+	wlr_scene_buffer_set_corner_radii(clone, corners);
+	wlr_scene_buffer_set_transfer_function(clone, buffer->transfer_function);
+	wlr_scene_buffer_set_primaries(clone, buffer->primaries);
+	wlr_scene_buffer_set_color_encoding(clone, buffer->color_encoding);
+	wlr_scene_buffer_set_color_range(clone, buffer->color_range);
+}
+
+static void
+overview_place(Client *c, struct wlr_box box, void *data)
+{
+	applybounds(c, &box, &c->mon->w);
+	c->overview_box = box;
+}
+
+static void
+overview_window(struct wlr_scene_tree *tree, Client *c, Monitor *m,
+		struct wlr_box card, struct wlr_box clip)
+{
+	struct wlr_box box = overview_project(c->overview_box, m->m, card);
+	struct wlr_box visible, inner;
+	struct OverviewPreview preview;
+	struct wlr_scene_rect *border;
+	int radius, bw;
+
+	if (!wlr_box_intersection(&visible, &box, &clip))
+		return;
+	preview.tree = wlr_scene_tree_create(tree);
+	preview.tree->node.data = c;
+	bw = c->bw ? MAX(1, (int)lround((double)c->bw * card.width / m->m.width)) : 0;
+	radius = c->isfullscreen ? 0 : (int)lround((double)border_radius * card.width / m->m.width);
+	inner = (struct wlr_box){box.x + bw, box.y + bw, box.width - 2 * bw, box.height - 2 * bw};
+
+	border = overview_rect(preview.tree, &visible,
+			c->shield_when_capture ? c->shield->color : c->border->color);
+	wlr_scene_rect_set_corner_radius(border, radius);
+	if (c->shield_when_capture || wlr_box_empty(&inner))
+		return;
+	/* Keep the frame behind a transparent client, with a rounded opening
+	 * for its buffers, even when a neighbouring card is partially visible. */
+	wlr_scene_rect_set_clipped_region(border, (struct clipped_region){
+		.area = { inner.x - visible.x, inner.y - visible.y, inner.width, inner.height },
+		.corners = corner_radii_all(radius),
+	});
+	if (!wlr_box_intersection(&preview.clip, &inner, &visible))
+		return;
+
+	preview.from = (struct wlr_box){ c->scene_surface->node.x, c->scene_surface->node.y,
+		MAX(1, c->border->width - 2 * (int)c->bw),
+		MAX(1, c->border->height - 2 * (int)c->bw) };
+	preview.to = inner;
+	wlr_scene_node_for_each_buffer(&c->scene_surface->node, overview_buffer, &preview);
+}
+
+static void
+overview_card(struct OverviewCard *card, Monitor *m, int index, struct wlr_box box)
+{
+	const int window_layers[] = { LyrTile, LyrFloat, LyrFS };
+	uint32_t mask = 1u << index;
+	const Layout *layout = m->lt[m->sellt];
+	struct wlr_box outline = { box.x - 2, box.y - 2, box.width + 4, box.height + 4 };
+	struct wlr_box visible;
+	struct wlr_scene_node *node;
+	Client *c, *fullscreen = NULL;
+	size_t i;
+
+	card->tag = index;
+	card->tree = wlr_scene_tree_create(overview.tree);
+	if (wlr_box_intersection(&visible, &outline, &m->w))
+		overview_rect(card->tree, &visible, (float[])COLOR(colors[
+				index == overview.selected || index == overview.hover ? SchemeSel : SchemeNorm][ColBorder]));
+	if (!wlr_box_intersection(&card->box, &box, &m->w))
+		return;
+	overview_rect(card->tree, &card->box, (float[]){0.06f, 0.07f, 0.09f, 1.0f});
+
+	wl_list_for_each(c, &fstack, flink) {
+		if (c->mon != m || !(c->tags & mask))
+			continue;
+		c->overview_box = c->isfullscreen ? m->m : c->geom;
+		if (!fullscreen && c->isfullscreen)
+			fullscreen = c;
+	}
+	if (!fullscreen && layout->arrange && mask != m->tagset[m->seltags])
+		layout->arrange(m, mask, overview_place, NULL);
+
+	/* Follow the desktop's scene stacking, including floating dialogs
+	 * belonging to the fullscreen client. */
+	for (i = 0; i < LENGTH(window_layers); i++) {
+		wl_list_for_each(node, &layers[window_layers[i]]->children, link) {
+			c = node->data;
+			if (!c || c->mon != m || !(c->tags & mask))
+				continue;
+			if (fullscreen && c != fullscreen && client_get_parent(c) != fullscreen)
+				continue;
+			overview_window(card->tree, c, m, box, card->box);
+		}
+	}
+}
+
+static void
+overview_refresh(void)
+{
+	Monitor *m = overview.mon;
+	struct wlr_scene_tree *old_tree = overview.tree;
+	struct wlr_box box;
+	int index, spacing;
+
+	if (!overview.dirty)
+		return;
+	if (wlr_box_empty(&m->w)) {
+		overview_dismiss();
+		motionnotify(0, NULL, 0, 0, 0, 0);
+		return;
+	}
+	overview.dirty = false;
+	overview.tree = wlr_scene_tree_create(layers[LyrOverview]);
+	wlr_scene_node_set_enabled(&overview.tree->node, false);
+	overview_rect(overview.tree, &m->w,
+			(float[]){ rootcolor[0] * 0.5f, rootcolor[1] * 0.5f, rootcolor[2] * 0.5f, 1.0f });
+
+	box.width = MAX(1, (int)lround(m->w.width * 0.58));
+	box.height = MAX(1, (int)lround(m->w.height * 0.58));
+	box.x = m->w.x + (m->w.width - box.width) / 2;
+	spacing = box.height + MAX(10, MIN(32, m->w.height / 32));
+	overview.card_count = 0;
+	for (index = MAX(0, overview.selected - 1);
+			index <= MIN((int)LENGTH(tags) - 1, overview.selected + 1); index++) {
+		box.y = m->w.y + (m->w.height - box.height) / 2 + (index - overview.selected) * spacing;
+		overview_card(&overview.cards[overview.card_count++], m, index, box);
+	}
+	if (old_tree)
+		wlr_scene_node_destroy(&old_tree->node);
+	wlr_scene_node_set_enabled(&overview.tree->node, true);
+}
+
+static struct OverviewCard *
+overview_card_at_pointer(void)
+{
+	size_t i;
+	for (i = 0; i < overview.card_count; i++)
+		if (wlr_box_contains_point(&overview.cards[i].box, cursor->x, cursor->y))
+			return &overview.cards[i];
+	return NULL;
+}
+
+static bool
+overview_dragging(void)
+{
+	double dx = cursor->x - overview.press_x, dy = cursor->y - overview.press_y;
+	return dx * dx + dy * dy >= 64;
+}
+
+static void
+overview_motion(void)
+{
+	struct OverviewCard *card = overview.tree ? overview_card_at_pointer() : NULL;
+	int hover = overview.pressed && !overview.pressed->isfullscreen && overview_dragging()
+		&& card && card->tag != overview.press_tag ? card->tag : -1;
+	if (hover != overview.hover) {
+		overview.hover = hover;
+		overview_damage(overview.mon);
+	}
+}
+
+static void
+overview_select(int index)
+{
+	index = MAX(0, MIN((int)LENGTH(tags) - 1, index));
+	if (index == overview.selected)
+		return;
+	overview.selected = index;
+	overview.hover = -1;
+	overview_damage(overview.mon);
+}
+
+static void
+overview_activate(int index, Client *c)
+{
+	Client *top;
+
+	selmon = overview.mon;
+	overview_dismiss();
+	view(&(Arg){ .ui = 1u << index });
+	top = focustop(selmon);
+	if (c && VISIBLEON(c, selmon) && (!top || !top->isfullscreen || c == top
+			|| client_get_parent(c) == top))
+		focusclient(c, 1);
+	motionnotify(0, NULL, 0, 0, 0, 0);
+}
+
+static bool
+overview_key(xkb_keysym_t sym)
+{
+	switch (sym) {
+	case XKB_KEY_Up:
+		overview_select(overview.selected - 1);
+		break;
+	case XKB_KEY_Down:
+		overview_select(overview.selected + 1);
+		break;
+	case XKB_KEY_Return:
+	case XKB_KEY_KP_Enter:
+		overview_activate(overview.selected, NULL);
+		break;
+	case XKB_KEY_Escape:
+		toggleoverview(NULL);
+		break;
+	default:
+		return false;
+	}
+	return true;
+}
+
+static bool
+overview_button(uint32_t button, bool pressed)
+{
+	struct OverviewCard *card;
+	struct wlr_scene_node *node;
+	Client *c;
+	bool tracked = button <= KEY_MAX && overview.buttons[button];
+
+	/* The release of a button pressed here belongs to the overview even
+	 * if it has already closed or the session locked in the meantime. */
+	if (!overview.mon && (pressed || !tracked))
+		return false;
+	if (button <= KEY_MAX)
+		overview.buttons[button] = pressed;
+	if (!overview.mon || (!pressed && !tracked))
+		return true;
+	if (button != BTN_LEFT)
+		return true;
+
+	overview_refresh();
+	if (!overview.mon)
+		return true;
+	card = overview_card_at_pointer();
+	if (pressed) {
+		overview.pressed = NULL;
+		overview.press_tag = card ? card->tag : -1;
+		overview.press_x = cursor->x;
+		overview.press_y = cursor->y;
+		if (card) {
+			node = wlr_scene_node_at(&card->tree->node, cursor->x, cursor->y, NULL, NULL);
+			for (; node && node != &card->tree->node; node = &node->parent->node)
+				if ((overview.pressed = node->data))
+					break;
+		}
+		return true;
+	}
+
+	c = overview.pressed;
+	overview.pressed = NULL;
+	overview_motion();
+	if (card && overview.press_tag >= 0) {
+		uint32_t source = 1u << overview.press_tag;
+		if (c && (c->mon != overview.mon || !(c->tags & source)))
+			c = NULL;
+		if (card->tag == overview.press_tag && !overview_dragging()) {
+			overview_activate(card->tag, c);
+		} else if (card->tag != overview.press_tag && c && !c->isfullscreen
+				&& overview_dragging()) {
+			/* A dwm-style tag move replaces the source bit only. */
+			setclienttags(c, (c->tags & ~source) | (1u << card->tag));
+			overview_select(card->tag);
+		}
+	}
+	overview.press_tag = -1;
+	return true;
+}
+
+static void
+overview_frame_done(struct wlr_surface *surface, int sx, int sy, void *data)
+{
+	wlr_surface_send_frame_done(surface, data);
+}
+
+struct OverviewSurface {
+	struct wl_listener commit, destroy;
+};
+
+static void
+overview_surface_commit(struct wl_listener *listener, void *data)
+{
+	struct wlr_surface *surface = data;
+	Client *c = NULL;
+
+	if (overview.mon && toplevel_from_wlr_surface(surface, &c, NULL) >= 0
+			&& c && !client_is_unmanaged(c) && c->mon == overview.mon)
+		overview_damage(c->mon);
+}
+
+static void
+overview_surface_destroy(struct wl_listener *listener, void *data)
+{
+	struct OverviewSurface *surface = wl_container_of(listener, surface, destroy);
+	wl_list_remove(&surface->commit.link);
+	wl_list_remove(&surface->destroy.link);
+	free(surface);
+}
+
+static void
+overview_new_surface(struct wl_listener *listener, void *data)
+{
+	struct wlr_surface *surface = data;
+	struct OverviewSurface *watch = ecalloc(1, sizeof(*watch));
+	LISTEN(&surface->events.commit, &watch->commit, overview_surface_commit);
+	LISTEN(&surface->events.destroy, &watch->destroy, overview_surface_destroy);
+}
+
 void
 rendermon(struct wl_listener *listener, void *data)
 {
@@ -4585,11 +5160,19 @@ rendermon(struct wl_listener *listener, void *data)
 		more = tick_closing_clients() || more;
 	}
 
+	if (overview.mon == m)
+		overview_refresh();
 	wlr_scene_output_commit(m->scene_output, NULL);
 
 	/* Let clients know a frame has been rendered */
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	wlr_scene_output_send_frame_done(m->scene_output, &now);
+	/* Preview buffers have no scene-surface frame listeners. Keep the
+	 * active tag's clients updating if the cards occlude their surfaces. */
+	if (overview.mon == m)
+		wl_list_for_each(c, &clients, link)
+			if (VISIBLEON(c, m))
+				wlr_surface_for_each_surface(client_surface(c), overview_frame_done, &now);
 
 	/* wasp: re-arm for another frame while anything is still animating --
 	 * gated on `ticked` (see ANIM_TICK_MIN_MS above) so a throttled pass
@@ -4637,9 +5220,11 @@ resize(Client *c, struct wlr_box geo, int interact)
 
 	bbox = interact ? &sgeom : &c->mon->w;
 
+	if (!wlr_box_equal(&c->geom, &geo))
+		overview_damage(c->mon);
 	client_set_bounds(c, geo.width, geo.height);
 	c->geom = geo;
-	applybounds(c, bbox);
+	applybounds(c, &c->geom, bbox);
 
 	/* Real XDG/X11 configure -- issued exactly once per relayout, not
 	 * once per animation frame (this is a no-op if size hasn't changed).
@@ -4984,6 +5569,7 @@ setup(void)
 	 * the clients cannot set the selection directly without compositor approval,
 	 * see the setsel() function. */
 	compositor = wlr_compositor_create(dpy, 6, drw);
+	wl_signal_add(&compositor->events.new_surface, &new_overview_surface);
 	wlr_subcompositor_create(dpy);
 	wlr_data_device_manager_create(dpy);
 	wlr_export_dmabuf_manager_v1_create(dpy);
@@ -5285,6 +5871,18 @@ swipeend(struct wl_listener *listener, void *data)
 	}
 }
 
+static void
+setclienttags(Client *c, uint32_t newtags)
+{
+	Monitor *m = c->mon;
+
+	c->tags = newtags;
+	if (m == selmon)
+		focusclient(focustop(m), 1);
+	arrange(m);
+	drawbars();
+}
+
 void
 tag(const Arg *arg)
 {
@@ -5292,10 +5890,7 @@ tag(const Arg *arg)
 	if (!sel || (arg->ui & TAGMASK) == 0)
 		return;
 
-	sel->tags = arg->ui & TAGMASK;
-	focusclient(focustop(selmon), 1);
-	arrange(selmon);
-	drawbars();
+	setclienttags(sel, arg->ui & TAGMASK);
 }
 
 void
@@ -5553,10 +6148,7 @@ toggletag(const Arg *arg)
 	if (!sel || !(newtags = sel->tags ^ (arg->ui & TAGMASK)))
 		return;
 
-	sel->tags = newtags;
-	focusclient(focustop(selmon), 1);
-	arrange(selmon);
-	drawbars();
+	setclienttags(sel, newtags);
 }
 
 void
@@ -5566,6 +6158,8 @@ toggleview(const Arg *arg)
 	if (!(newtagset = selmon ? selmon->tagset[selmon->seltags] ^ (arg->ui & TAGMASK) : 0))
 		return;
 
+	if (overview.mon == selmon)
+		overview_dismiss();
 	selmon->tagset[selmon->seltags] = newtagset;
 	focusclient(focustop(selmon), 1);
 	arrange(selmon);
@@ -5600,6 +6194,11 @@ unmapnotify(struct wl_listener *listener, void *data)
 {
 	/* Called when the surface is unmapped, and should no longer be shown. */
 	Client *c = wl_container_of(listener, c, unmap);
+	if (overview.pressed == c) {
+		overview.pressed = NULL;
+		overview.press_tag = -1;
+		overview.hover = -1;
+	}
 	if (c == grabc) {
 		cursor_mode = CurNormal;
 		grabc = NULL;
@@ -5667,6 +6266,8 @@ updatemons(struct wl_listener *listener, void *data)
 	wl_list_for_each(m, &mons, link) {
 		if (m->wlr_output->enabled)
 			continue;
+		if (overview.mon == m)
+			overview_dismiss();
 		config_head = wlr_output_configuration_head_v1_create(config, m->wlr_output);
 		config_head->state.enabled = 0;
 		if (m->asleep)
@@ -5843,6 +6444,8 @@ view(const Arg *arg)
 {
 	if (!selmon || (arg->ui & TAGMASK) == selmon->tagset[selmon->seltags])
 		return;
+	if (overview.mon == selmon)
+		overview_dismiss();
 	selmon->seltags ^= 1; /* toggle sel tagset */
 	if (arg->ui & TAGMASK)
 		selmon->tagset[selmon->seltags] = arg->ui & TAGMASK;
@@ -5925,6 +6528,8 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 	int layer;
 
 	for (layer = NUM_LAYERS - 1; !surface && layer >= (locked ? LyrBlock : 0); layer--) {
+		if (layer == LyrOverview)
+			continue;
 		if (!(node = wlr_scene_node_at(&layers[layer]->node, x, y, nx, ny)))
 			continue;
 

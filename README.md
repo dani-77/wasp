@@ -21,8 +21,9 @@ dwindle, floating) underneath, built on [wlroots] and [SceneFX], with
   (appearance, gaps, animations, blur, keybindings, keyboard layout,
   output scale, the bar) applies the instant you reload, no restart.
 - **Tiling layouts** — tile, monocle, dwindle (fibonacci/spiral), and
-  floating, switchable per-monitor and per-tag. The layout engine
-  can also calculate tiled placements for an inactive workspace.
+  floating, switchable per-monitor and per-tag.
+- **Workspace overview** — browse scaled previews of neighbouring tags
+  and drag windows between them.
 - **Animations** — open/close/move/tag-switch tweening, fade or zoom,
   cubic-bezier easing, off by default.
 - **Rounded corners + blur** — via SceneFX: window corner radius,
@@ -69,6 +70,28 @@ cp examples/config.lua ~/.config/wasp/config.lua
 full reference — every option, commented, ready to uncomment and tweak.
 Edit it, reload (`mod+shift+r` by default, or `pkill -HUP -x wasp` from
 a script), and most changes apply immediately.
+
+## Workspace overview
+
+Press **Mod+O** to open the overview on the selected monitor. The example
+config also binds a four-finger upward swipe. Use Up/Down or scroll to
+browse tags, Enter or click to switch, and Escape to cancel.
+Drag a window onto a neighbouring card to move it there. The overview
+stays open after the move so you can keep browsing or press Enter to follow
+the window. Fullscreen windows stay on their current tag.
+
+Existing configs can add the key and gesture to their respective tables.
+
+```lua
+-- In wasp.keys
+{ mods = { "mod" }, key = "o", action = "overview" },
+-- In wasp.gestures
+{ fingers = 4, direction = "up", action = "overview" },
+```
+
+Each monitor has its own tags. On a monitor showing several tags at once,
+the overview starts on the lowest-numbered tag. Protected windows use a
+solid preview under the `shield_when_capture` rule.
 
 ## Docs
 

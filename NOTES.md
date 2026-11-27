@@ -14,6 +14,11 @@ it can calculate inactive tag geometry alongside the active layout.
 The callback in the regular arrange path resizes clients and keeps
 monocle stacking and the bar symbol in sync.
 
+The overview uses separate SceneFX buffer nodes above the desktop on the
+selected output. Each card projects real or calculated window placements
+into the usable area. The compositor owns keyboard and pointer navigation,
+and window drops use the existing tag mask and arrange path.
+
 ## Up next (2026-08-12, Daniel's stated order) -- ALL DONE (2026-08-15)
 Three things, in this order (2026-08-14: #2 and #3 done). #7 (scenefx
 blur/rounded corners), #8 (touchpad gestures), and #9 (modern

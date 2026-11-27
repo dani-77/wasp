@@ -198,6 +198,7 @@ wasp.rules = {
 --   incnmaster        dir = 1 | -1          grow/shrink master area's window count
 --   setmfact          delta = <float>       grow/shrink master area's size
 --   view              tag = 1..9 | "all" (omit = toggle back)   switch workspace
+--   overview                              toggle workspace overview
 --   viewshift         dir = 1 | -1          next/previous workspace (wraps)
 --   toggleview        tag = 1..9                                 also show workspace
 --   tag               tag = 1..9 | "all" (omit = toggle back)   move focused window
@@ -244,6 +245,7 @@ bind({}, "Print", "spawn", { cmd = { "sh", "-c", "grim ~/screenshot-$(date +%Y%m
 -- Window navigation
 bind({ "mod" }, "j",    "focusstack", { dir = 1 })
 bind({ "mod" }, "k",    "focusstack", { dir = -1 })
+bind({ "mod" }, "o",    "overview")
 bind({ "mod" }, "Tab",  "view") -- go back to the previously selected tags
 bind({ "mod" }, "Return", "zoom")
 bind({ "mod", "shift" }, "j", "movestack", { dir = 1 })
@@ -352,8 +354,7 @@ wasp.gestures = {
   -- 3-finger left/right cycles focus between windows (same as Mod+j/k).
   -- { fingers = 3, direction = "left",  action = "focusstack", dir = -1 },
   -- { fingers = 3, direction = "right", action = "focusstack", dir = 1 },
-  -- 4-finger up/down for fullscreen toggle.
-  -- { fingers = 4, direction = "up",    action = "togglefullscreen" },
+  { fingers = 4, direction = "up", action = "overview" },
   -- 4-finger left/right — next/previous workspace, wrapping (9 -> 1, 1 -> 9).
   -- { fingers = 4, direction = "left",  action = "viewshift", dir = -1 },
   -- { fingers = 4, direction = "right", action = "viewshift", dir = 1 },

@@ -186,6 +186,37 @@ running list, plus which [dwl-patches] are earmarked for which feature and
 why, lives in [`NOTES.md`](../NOTES.md) — that's the file to check for
 current plans, not this doc.
 
+## Workspace overview
+
+The `overview` action is available to Lua key and swipe bindings. It
+tracks a preview tag on the selected output. Enter and click call the
+normal tag activation path. Dropping a window replaces its source tag
+bit and keeps any other tags assigned to that window. Hidden scratchpads
+stay off the cards, and fullscreen windows keep their original tag.
+
+SceneFX draws the cards within the output's logical usable area, leaving
+reserved panel space available. The active tag uses regular window
+placements. Inactive tags use the current layout's placement callback
+with their own mask. Floating geometry and fullscreen state come from
+the existing clients. The scene layer takes the latest surface buffers,
+including subsurfaces, and clips each thumbnail to its card and output.
+It preserves buffer transforms, source cropping, rounded corners and
+surface opacity. Explicitly synchronized buffers carry their acquire
+fences into the preview, whose render samples register release fences.
+The previews contain managed toplevels and their subsurfaces.
+
+Rendering and hit testing share the same scene nodes. Browsing leaves
+tag visibility and workspace protocol state alone. The overview consumes
+window input while open and releases its preview buffers on dismissal.
+Session lock and removal or power-off of the selected output dismiss it.
+Protected previews use solid rectangles and never reference the clients'
+buffers, including during output capture.
+
+Headless SceneFX checks covered Wayland and XWayland client previews.
+Keyboard and pointer tests covered cancellation, activation, scrolling,
+cross-tag drops, fullscreen and floating geometry, capture shielding, and
+session lock. The compositor also builds without XWayland.
+
 ## Building
 
 Same dependencies as upstream dwl, plus Lua 5.4:
